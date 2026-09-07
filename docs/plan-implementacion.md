@@ -381,6 +381,34 @@ F5 queda cerrada** (sin verificar contra hardware real: no hay BLE
 involucrado en `report/`, todo el input ya viene resuelto en
 `MeasuredPair`).
 
+**Revisión posterior (pedido explícito del usuario, tras ver el primer
+reporte real):** el formato se rediseñó para ser legible directamente por
+el usuario, no solo como dato crudo. Cambios sobre el esquema de arriba —
+ver [formato-reporte.md](formato-reporte.md) para el detalle completo y
+un ejemplo real:
+
+- `PairResult.error_abs_cm`/`.error_pct` (sin signo, en cm) se
+  reemplazaron por `diff_m`/`diff_pct` (**con signo**, en metros:
+  `medida − calculada`) — más legible y permite ver si se midió de más o
+  de menos, no solo cuánto.
+- Nuevo campo `necesita_revision: bool`: umbral independiente de `estado`
+  (default 30 cm, `DEFAULT_REVIEW_THRESHOLD_CM` en `report/build.py`,
+  expuesto como `--review-threshold-cm` en F6) para distinguir "un poco
+  fuera de tolerancia" (ruido normal) de "diferencia enorme, revisar
+  datos cargados". `summarize()` agrega un conteo `revisar` al resumen.
+- `write_reports()` ahora acepta también `sala_nombre`, `samples`,
+  `tolerance_cm` y `review_threshold_cm` (antes solo `sala_id`) para
+  mostrarlos en el encabezado del reporte.
+- Markdown rediseñado: título con nombre de sala, fecha y hora legible
+  (`dd/mm/aaaa hh:mm:ss`), línea de criterios usados, sección "Resumen
+  ejecutivo" con emoji por estado, tabla de detalle numerada con columnas
+  `Diferencia (m)` / `Diferencia (%)` / `Revisar` separadas, y la sección
+  de fallos renombrada a "Mediciones que requieren revisión" (incluye
+  tanto `estado != PASS` como `necesita_revision = true`).
+- Estos emoji/flechas (`✅`, `→`, etc.) son seguros en los archivos
+  (`encoding="utf-8"` explícito) pero **no** en lo que se imprime a
+  terminal — ver el hallazgo de F6 sobre la consola legacy de Windows.
+
 ## 8. F6 — CLI
 
 ```

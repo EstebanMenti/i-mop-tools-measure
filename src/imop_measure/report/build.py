@@ -1,6 +1,6 @@
 """Construye las filas y el resumen del reporte a partir de mediciones reales.
 
-Ver docs/plan-implementacion.md Fase F5.
+Ver docs/plan-implementacion.md Fase F5 y docs/formato-reporte.md.
 """
 
 from imop_measure.geometry.distance import euclidean_distance
@@ -12,26 +12,41 @@ from imop_measure.report.models import Estado, PairResult
 # Fase F5). F6 lo expone como `--tolerance-cm` con este mismo default.
 DEFAULT_TOLERANCE_CM = 5.0
 
+# Umbral de "a revisar", independiente de la tolerancia PASS/FAIL: una
+# diferencia mayor a esto probablemente sea un error de carga de datos
+# (nodo equivocado, posicion mal tipeada), no ruido normal de multipath.
+# Pedido explicito del usuario — ver docs/formato-reporte.md seccion 5.
+DEFAULT_REVIEW_THRESHOLD_CM = 30.0
+
 
 def build_results(
-    measured_pairs: list[MeasuredPair], *, tolerance_cm: float = DEFAULT_TOLERANCE_CM
+    measured_pairs: list[MeasuredPair],
+    *,
+    tolerance_cm: float = DEFAULT_TOLERANCE_CM,
+    review_threshold_cm: float = DEFAULT_REVIEW_THRESHOLD_CM,
 ) -> list[PairResult]:
     """Arma un `PairResult` por cada `MeasuredPair`, comparando la distancia
     medida contra la distancia geométrica calculada a partir de las
     posiciones declaradas en el ambiente."""
-    return [_build_one(measured, tolerance_cm=tolerance_cm) for measured in measured_pairs]
+    return [
+        _build_one(measured, tolerance_cm=tolerance_cm, review_threshold_cm=review_threshold_cm)
+        for measured in measured_pairs
+    ]
 
 
 def summarize(results: list[PairResult]) -> dict[str, int]:
-    """Cuenta resultados por estado, mas el total."""
+    """Cuenta resultados por estado, mas cuantos necesitan revision y el total."""
     counts = {"pass": 0, "fail": 0, "error": 0}
     for result in results:
         counts[result.estado.lower()] += 1
+    counts["revisar"] = sum(1 for result in results if result.necesita_revision)
     counts["total"] = len(results)
     return counts
 
 
-def _build_one(measured: MeasuredPair, *, tolerance_cm: float) -> PairResult:
+def _build_one(
+    measured: MeasuredPair, *, tolerance_cm: float, review_threshold_cm: float
+) -> PairResult:
     distance_calc_m = euclidean_distance(measured.initiator, measured.responder)
 
     if measured.mean_cm is None:
@@ -40,26 +55,30 @@ def _build_one(measured: MeasuredPair, *, tolerance_cm: float) -> PairResult:
             responder=measured.responder.nombre,
             distance_calc_m=distance_calc_m,
             distance_measured_m=None,
-            error_abs_cm=None,
-            error_pct=None,
+            diff_m=None,
+            diff_pct=None,
+            necesita_revision=False,
             n_samples_success=measured.n_success,
             n_samples_requested=measured.n_requested,
             estado="ERROR",
             detalle=measured.error,
         )
 
-    distance_calc_cm = distance_calc_m * 100.0
-    error_abs_cm = abs(measured.mean_cm - distance_calc_cm)
-    error_pct = (error_abs_cm / distance_calc_cm * 100.0) if distance_calc_cm > 0 else None
-    estado: Estado = "PASS" if error_abs_cm <= tolerance_cm else "FAIL"
+    distance_measured_m = measured.mean_cm / 100.0
+    diff_m = distance_measured_m - distance_calc_m
+    diff_cm = diff_m * 100.0
+    diff_cm_abs = abs(diff_cm)
+    diff_pct = (diff_cm / (distance_calc_m * 100.0) * 100.0) if distance_calc_m > 0 else None
+    estado: Estado = "PASS" if diff_cm_abs <= tolerance_cm else "FAIL"
 
     return PairResult(
         initiator=measured.initiator.nombre,
         responder=measured.responder.nombre,
         distance_calc_m=distance_calc_m,
-        distance_measured_m=measured.mean_cm / 100.0,
-        error_abs_cm=error_abs_cm,
-        error_pct=error_pct,
+        distance_measured_m=distance_measured_m,
+        diff_m=diff_m,
+        diff_pct=diff_pct,
+        necesita_revision=diff_cm_abs > review_threshold_cm,
         n_samples_success=measured.n_success,
         n_samples_requested=measured.n_requested,
         estado=estado,

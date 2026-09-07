@@ -64,7 +64,9 @@ los demás **en ambas direcciones** (cada nodo pasa por turno como
 iniciador y como respondedor — ver
 [docs/arquitectura.md](docs/arquitectura.md) decisión D6), y genera
 `reports/medicion-<sala_id>-<timestamp>.json` y `.md` con la comparación
-calculada vs. medida por dirección.
+calculada vs. medida por dirección — ver
+[docs/formato-reporte.md](docs/formato-reporte.md) para el esquema
+completo de ambos archivos, con un ejemplo real.
 
 > **Nota:** si `posicion` en el TOML todavía no refleja la ubicación
 > física real de los nodos (ver
@@ -83,6 +85,7 @@ calculada vs. medida por dirección.
 | [docs/plan-implementacion.md](docs/plan-implementacion.md) | Fases de implementación, de andamiaje a herramienta visual |
 | [docs/protocolo-ble-qorvo.md](docs/protocolo-ble-qorvo.md) | Comandos BLE/Qorvo usados para configurar nodos y leer distancia |
 | [docs/formato-ambiente-toml.md](docs/formato-ambiente-toml.md) | Esquema de `environments/sala_XX.toml` |
+| [docs/formato-reporte.md](docs/formato-reporte.md) | Esquema del reporte JSON/Markdown que genera `imop-measure run` |
 
 ## 7. Desarrollo
 

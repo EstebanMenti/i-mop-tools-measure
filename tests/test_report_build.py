@@ -46,8 +46,9 @@ def test_build_results_pass_within_tolerance() -> None:
     assert result.responder == "b"
     assert result.distance_calc_m == pytest.approx(5.0)
     assert result.distance_measured_m == pytest.approx(5.0)
-    assert result.error_abs_cm == pytest.approx(0.0)
-    assert result.error_pct == pytest.approx(0.0)
+    assert result.diff_m == pytest.approx(0.0)
+    assert result.diff_pct == pytest.approx(0.0)
+    assert result.necesita_revision is False
     assert result.detalle is None
 
 
@@ -56,8 +57,26 @@ def test_build_results_fail_outside_tolerance() -> None:
 
     result = results[0]
     assert result.estado == "FAIL"
-    assert result.error_abs_cm == pytest.approx(20.0)
-    assert result.error_pct == pytest.approx(4.0)
+    assert result.diff_m == pytest.approx(0.20)  # medida (5.20m) - calculada (5.00m)
+    assert result.diff_pct == pytest.approx(4.0)
+    assert result.necesita_revision is False  # 20cm < umbral de revision (30cm default)
+
+
+def test_build_results_flags_necesita_revision_above_threshold() -> None:
+    results = build_results([_measured(535.0)], tolerance_cm=5.0, review_threshold_cm=30.0)
+
+    result = results[0]
+    assert result.estado == "FAIL"
+    assert result.diff_m == pytest.approx(0.35)  # 35cm de diferencia > 30cm de umbral
+    assert result.necesita_revision is True
+
+
+def test_build_results_negative_diff_when_measured_is_shorter() -> None:
+    results = build_results([_measured(480.0)], tolerance_cm=5.0)  # 20cm mas corto
+
+    result = results[0]
+    assert result.diff_m == pytest.approx(-0.20)
+    assert result.diff_pct == pytest.approx(-4.0)
 
 
 def test_build_results_error_when_no_measurement() -> None:
@@ -66,15 +85,16 @@ def test_build_results_error_when_no_measurement() -> None:
     result = results[0]
     assert result.estado == "ERROR"
     assert result.distance_measured_m is None
-    assert result.error_abs_cm is None
-    assert result.error_pct is None
+    assert result.diff_m is None
+    assert result.diff_pct is None
+    assert result.necesita_revision is False
     assert result.n_samples_success == 0
     assert result.detalle == "sin mediciones SUCCESS recibidas"
     # La distancia calculada se informa igual, aunque la medicion haya fallado.
     assert result.distance_calc_m == pytest.approx(5.0)
 
 
-def test_build_results_zero_calculated_distance_has_no_error_pct() -> None:
+def test_build_results_zero_calculated_distance_has_no_diff_pct() -> None:
     same_spot = _anchor("c", (0.0, 0.0, 0.0))
     measured = MeasuredPair(
         initiator=NODE_A,
@@ -90,18 +110,20 @@ def test_build_results_zero_calculated_distance_has_no_error_pct() -> None:
     result = build_results([measured])[0]
 
     assert result.distance_calc_m == 0.0
-    assert result.error_pct is None  # evita division por cero
+    assert result.diff_pct is None  # evita division por cero
+    assert result.diff_m == pytest.approx(0.10)  # diff_m si se calcula, solo el % se omite
 
 
-def test_summarize_counts_by_estado() -> None:
+def test_summarize_counts_by_estado_and_revision() -> None:
     results = build_results(
         [
             _measured(500.0),  # PASS
-            _measured(520.0),  # FAIL
+            _measured(520.0),  # FAIL, no llega al umbral de revision
+            _measured(535.0),  # FAIL, supera el umbral de revision (30cm)
             _measured(None, error="timeout"),  # ERROR
         ]
     )
 
     summary = summarize(results)
 
-    assert summary == {"pass": 1, "fail": 1, "error": 1, "total": 3}
+    assert summary == {"pass": 1, "fail": 2, "error": 1, "revisar": 1, "total": 4}
