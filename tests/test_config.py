@@ -36,16 +36,15 @@ def test_load_sala_20_real() -> None:
 
     assert ambiente.id == "20"
     assert {anchor.key for anchor in ambiente.anchors} == {
-        "uwb_node_2",
-        "uwb_node_3",
-        "uwb_node_4",
-        "uwb_node_5",
+        "uwb_node_10",
+        "uwb_node_11",
     }
-    assert len(ambiente.anchors) == 4
+    assert len(ambiente.anchors) == 2
 
-    node_3 = next(a for a in ambiente.anchors if a.key == "uwb_node_3")
-    assert node_3.posicion == pytest.approx((0.03, 2.6, 0.82))
-    assert node_3.uwb_addr == "00:03"
+    node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
+    assert node_11.posicion == pytest.approx((0.03, 0.03, 0.26))
+    assert node_11.uwb_addr == "00:02"
+    assert node_11.mac == "E5:A2:2C:DB:14:B9"
 
     assert ambiente.ble_timeouts["connection_timeout"] == pytest.approx(180.0)
     assert ambiente.ble_timeouts["max_concurrent_connections"] == pytest.approx(5.0)

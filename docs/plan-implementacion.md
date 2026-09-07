@@ -111,10 +111,13 @@ Tests (`tests/test_config.py`, `tests/test_geometry.py`): usar
 (id no coincide, `uwb_addr` mal formado, 1 sola ancla) deben levantar
 `ConfigError`.
 
-Criterio de aceptación: `load_ambiente(Path("environments/sala_20.toml"))`
-devuelve 4 anclas activas y `all_pairs(...)` devuelve 6 pares; distancia
-calculada entre `uwb_node_2` y `uwb_node_3` verificable a mano
-(`√((0.03-0.03)² + (2.6-0.03)² + (0.82-0.26)²) ≈ 2.629 m`).
+Criterio de aceptación (verificado en la Fase F1): `load_ambiente` carga
+sin error las anclas activas declaradas en `environments/sala_20.toml` y
+`all_pairs(...)` genera todas sus combinaciones sin repetición
+(`N` anclas → `N·(N-1)/2` pares). `tests/test_config.py` y
+`tests/test_geometry.py` usan ese archivo como fixture real y se
+actualizan junto con sus datos — no asumir en esta guía una cantidad fija
+de anclas, cambia a medida que se agregan nodos reales.
 
 ## 4. F2 — Dependencia BLE + direccionamiento + sesión
 

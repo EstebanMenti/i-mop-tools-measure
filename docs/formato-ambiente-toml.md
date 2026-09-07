@@ -107,6 +107,8 @@ tiempo_prendido = "120s"
 ```
 
 Con dos o más anclas activas, `geometry/pairs.py` genera todos los pares
-sin repetición (para 4 anclas activas como en `sala_20.toml` actual: 6
-pares) y `geometry/distance.py` calcula la distancia euclídea 3D de cada
-uno a partir de `posicion`.
+sin repetición (`N` anclas → `N·(N-1)/2` pares) y `geometry/distance.py`
+calcula la distancia euclídea 3D de cada uno a partir de `posicion`. La
+cantidad de anclas activas en `environments/sala_20.toml` cambia a medida
+que se van agregando nodos reales — ver el archivo directamente para el
+estado actual, no asumir un número fijo en la documentación.
