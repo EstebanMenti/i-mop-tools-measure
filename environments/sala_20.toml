@@ -31,69 +31,21 @@ z = 3.0
 # Formato de tiempo: número + sufijo (s = segundos, m = minutos)
 # ---------------------------------------------------------------------------
 
-#[[anchors]]
-#key             = "uwb_node_1"
-#nombre          = "UWB-Node-1"
-#mac             = "00:00:00:00:00:01"   # TODO: MAC BLE real del nodo 1
-#uwb_addr        = "00:01"               # TODO: short address UWB real del nodo 1
-#posicion        = [0.0, 0.0, 0.85]   # [x, y, z] metros
-#tiempo_prendido = "120s"
-
 [[anchors]]
-key             = "uwb_node_2"
-nombre          = "UWB-Node-2"
-mac             = "00:00:00:00:00:02"   # TODO: MAC BLE real del nodo 2
-uwb_addr        = "00:02"               # TODO: short address UWB real del nodo 2
-posicion        = [0.03, 0.03, 0.26]
+key             = "uwb_node_10"
+nombre          = "UWB-Node-10"
+mac             = "FD:7A:90:57:CC:9F"
+uwb_addr        = "00:01"               # TODO: short address UWB real del nodo 10
+posicion        = [0.0, 0.0, 0.85]      # TODO: posicion real del nodo 10
 tiempo_prendido = "120s"
 
 [[anchors]]
-key             = "uwb_node_3"
-nombre          = "UWB-Node-3"
-mac             = "00:00:00:00:00:03"   # TODO: MAC BLE real del nodo 3
-uwb_addr        = "00:03"               # TODO: short address UWB real del nodo 3
-posicion        = [0.03, 2.6, 0.82]
+key             = "uwb_node_11"
+nombre          = "UWB-Node-11"
+mac             = "E5:A2:2C:DB:14:B9"
+uwb_addr        = "00:02"               # TODO: short address UWB real del nodo 11
+posicion        = [0.03, 0.03, 0.26]    # TODO: posicion real del nodo 11
 tiempo_prendido = "120s"
-
-[[anchors]]
-key             = "uwb_node_4"
-nombre          = "UWB-Node-4"
-mac             = "00:00:00:00:00:04"   # TODO: MAC BLE real del nodo 4
-uwb_addr        = "00:04"               # TODO: short address UWB real del nodo 4
-posicion        = [3.3, 2.6, 0.20]
-tiempo_prendido = "120s"
-
-[[anchors]]
-key             = "uwb_node_5"
-nombre          = "UWB-Node-5"
-mac             = "00:00:00:00:00:05"   # TODO: MAC BLE real del nodo 5
-uwb_addr        = "00:05"               # TODO: short address UWB real del nodo 5
-posicion        = [3.28, 0.03, 0.90]
-tiempo_prendido = "120s"
-
-# [[anchors]]
-# key             = "uwb_node_6"
-# nombre          = "UWB-Node-6"
-# mac             = "00:00:00:00:00:06"   # TODO: MAC BLE real del nodo 6
-# uwb_addr        = "00:06"               # TODO: short address UWB real del nodo 6
-# posicion        = [6.0, 8.0, 0.85]
-# tiempo_prendido = "120s"
-
-# [[anchors]]
-# key             = "uwb_node_7"
-# nombre          = "UWB-Node-7"
-# mac             = "00:00:00:00:00:07"   # TODO: MAC BLE real del nodo 6
-# uwb_addr        = "00:07"               # TODO: short address UWB real del nodo 6
-# posicion        = [6.0, 0.0, 0.85]
-# tiempo_prendido = "120s"
-
-# [[anchors]]
-# key             = "uwb_node_9"
-# nombre          = "UWB-Node-9"
-# mac             = "00:00:00:00:00:09"   # TODO: MAC BLE real del nodo 6
-# uwb_addr        = "00:09"               # TODO: short address UWB real del nodo 6
-# posicion        = [0.0, 8.0, 0.85]
-# tiempo_prendido = "120s"
 
 # ---------------------------------------------------------------------------
 # Timeouts BLE para esta sala (opcional - se usan defaults si se omite)

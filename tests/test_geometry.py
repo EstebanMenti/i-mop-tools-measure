@@ -54,13 +54,14 @@ def test_all_pairs_sin_repeticion() -> None:
 
 def test_all_pairs_ambiente_sala_20_real() -> None:
     ambiente = load_ambiente(ENVIRONMENTS_DIR / "sala_20.toml")
+    n = len(ambiente.anchors)
 
     pairs = all_pairs(ambiente.anchors)
 
-    assert len(pairs) == 6  # C(4,2)
+    assert len(pairs) == n * (n - 1) // 2
 
-    node_2 = next(a for a in ambiente.anchors if a.key == "uwb_node_2")
-    node_3 = next(a for a in ambiente.anchors if a.key == "uwb_node_3")
-    distancia = euclidean_distance(node_2, node_3)
+    node_10 = next(a for a in ambiente.anchors if a.key == "uwb_node_10")
+    node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
+    distancia = euclidean_distance(node_10, node_11)
 
-    assert distancia == pytest.approx(math.sqrt(2.57**2 + 0.56**2), abs=1e-3)
+    assert distancia == pytest.approx(math.sqrt(0.03**2 + 0.03**2 + 0.59**2), abs=1e-3)
