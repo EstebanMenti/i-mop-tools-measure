@@ -1,16 +1,20 @@
-"""Tests de imop_measure.ranging.pair_runner.run_pair — no requieren hardware.
+"""Tests de imop_measure.ranging.pair_runner.run_pair.
 
-Ejercita el flujo completo (BleTransport + DwmCliClient reales) inyectando
-un `_transport_factory` que conecta cada nodo a un `FakeBleakClient`
-scripteado, en vez de reemplazar transporte/cliente por dobles de mas
-alto nivel — asi se prueba el codigo de produccion real, no una version
-simplificada de el.
+La mayoria no requiere hardware: ejercitan el flujo completo (BleTransport
++ DwmCliClient reales) inyectando un `_transport_factory` que conecta cada
+nodo a un `FakeBleakClient` scripteado, en vez de reemplazar
+transporte/cliente por dobles de mas alto nivel — asi se prueba el codigo
+de produccion real, no una version simplificada de el. Las marcadas
+`@pytest.mark.hardware` sí requieren los nodos fisicos de
+environments/sala_20.toml, y quedan excluidas por defecto.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
+from imop_measure.config.loader import load_ambiente
 from imop_measure.config.models import Anchor
 from imop_measure.ranging.pair_runner import run_pair
 from imop_measure.ranging.session import SessionParams
@@ -182,3 +186,67 @@ def test_run_pair_connect_failure_marks_error_without_raising() -> None:
     assert result.error is not None
     assert result.n_success == 0
     assert fake_b.is_connected is False  # nunca se llego a abrir el segundo transporte
+
+
+def test_run_pair_handles_real_three_fragment_notification() -> None:
+    """Captura real (2026-09-07, uwb_node_10 <-> uwb_node_11 fisicos).
+
+    El formato realmente observado en hardware difiere del documentado
+    originalmente en el repo hermano (2 lineas, continuacion con `\\r`
+    residual): acá llegan **3** lineas — la principal, una linea vacia
+    (residuo de un `\\r` suelto), y la continuacion arrancando con un
+    espacio (no `\\r`). `read_notifications`/`parse_session_info` lo
+    parsean bien de todos modos porque acumulan fragmentos hasta balancear
+    llaves, sin asumir una cantidad fija de lineas — este test fija ese
+    comportamiento como regresion. Ver docs/protocolo-ble-qorvo.md
+    seccion 4.
+    """
+    script_a, script_b = _base_scripts()
+    script_a[RESPF_COMMAND] = [b"ok\r\n"]
+    real_capture = (
+        b"SESSION_INFO_NTF: {session_handle=1, sequence_number=0, block_index=0,"
+        b' n_measurements=1\r\n\r\n [mac_address=0x0001, status="SUCCESS", distance[cm]=337]}\r\n'
+    )
+    script_b[INITF_COMMAND] = [b"ok\r\n", real_capture]
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+
+    result = run_pair(
+        ANCHOR_A,
+        ANCHOR_B,
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=_make_factory(fake_a, fake_b),
+    )
+
+    assert result.error is None
+    assert result.distance_cm_samples == [337]
+
+
+@pytest.mark.hardware
+def test_run_pair_against_real_nodes() -> None:
+    """Corre run_pair contra los nodos fisicos de environments/sala_20.toml.
+
+    Requiere tener ambos nodos encendidos y al alcance de BLE. Verificado
+    manualmente el 2026-09-07 contra uwb_node_10/uwb_node_11 reales:
+    15/15 muestras SUCCESS, media 341.9 cm, desvio 2.1 cm.
+    """
+    toml_path = Path(__file__).resolve().parent.parent / "environments" / "sala_20.toml"
+    ambiente = load_ambiente(toml_path)
+    anchor_a, anchor_b = ambiente.anchors[0], ambiente.anchors[1]
+
+    result = run_pair(
+        anchor_a,
+        anchor_b,
+        session=SessionParams(),
+        n_samples=10,
+        ble_timeouts=ambiente.ble_timeouts,
+    )
+
+    assert result.error is None, result.error
+    # Al menos la mitad de las muestras pedidas, mismo criterio que
+    # dwm3001c_cli.calibration.sampler.collect_samples (enlace malo si no).
+    assert result.n_success >= result.n_requested / 2
+    assert result.mean_cm is not None
+    assert 0 < result.mean_cm < 5000  # rango fisicamente plausible en interiores (< 50 m)

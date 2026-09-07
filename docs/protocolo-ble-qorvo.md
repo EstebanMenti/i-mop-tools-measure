@@ -113,23 +113,46 @@ Convención de responsable de arranque: se recomienda arrancar primero el
 `dwm3001c_cli.calibration.sampler.collect_samples` — evita que el
 iniciador empiece a transmitir antes de que el respondedor esté escuchando.
 
+> **[Verificado 2026-09-07 contra hardware real]:** toda esta secuencia
+> (`qorvo on` → `STOP` → `STAT` → `RESPF` en el respondedor → `INITF` en
+> el iniciador → lectura de `SESSION_INFO_NTF` → `STOP` en ambos →
+> `qorvo off` → desconexión) corrió de punta a punta contra dos nodos
+> físicos (`uwb_node_10`/`uwb_node_11` de `environments/sala_20.toml`) vía
+> `ranging.pair_runner.run_pair`, sin intervención manual.
+
 ## 4. Lectura de la distancia medida
 
-La distancia llega como notificación asíncrona, en **dos líneas** (la
-segunda arranca con un `\r` residual):
+La distancia llega como notificación asíncrona. La documentación original
+(tomada del repo hermano) describe **dos líneas** (la segunda arranca con
+un `\r` residual):
 
 ```
 SESSION_INFO_NTF: {session_handle=1, sequence_number=0, block_index=0, n_measurements=1
  [mac_address=0x0001, status="SUCCESS", distance[cm]=210, RSSI[dBm]=-78.0]}
 ```
 
+> **[Verificado 2026-09-07 contra hardware real, `uwb_node_10` ↔
+> `uwb_node_11`]:** en la práctica llegaron **tres** líneas — la
+> principal, una línea **vacía** (residuo de un `\r` suelto sin `\n`
+> emparejado) y la continuación arrancando con un **espacio** (no `\r`):
+> ```
+> SESSION_INFO_NTF: {session_handle=1, sequence_number=0, block_index=0, n_measurements=1
+>
+>  [mac_address=0x0001, status="SUCCESS", distance[cm]=337]}
+> ```
+> No hace falta manejarlo como caso especial: `DwmCliClient.read_notifications`
+> acumula fragmentos hasta que las llaves `{}` balancean, sin asumir una
+> cantidad fija de líneas — parsea ambas variantes igual. Este caso quedó
+> fijado como test de regresión
+> (`tests/test_ranging_pair_runner.py::test_run_pair_handles_real_three_fragment_notification`).
+
 - Solo las líneas con `status="SUCCESS"` traen `distance[cm]` — otros
   estados (ej. `"RX_TIMEOUT"`) no tienen ese campo.
 - Una sola muestra tiene resolución de 1 cm pero varios cm de dispersión
-  por multipath — hay que promediar varias muestras. El repo hermano usa
-  100 muestras para calibración; para este proyecto, ver el default de
-  cantidad de muestras en `[ble_timeouts]`/config CLI (a definir en Fase
-  F3, ver [plan-implementacion.md](plan-implementacion.md)).
+  por multipath — hay que promediar varias muestras.
+  [Verificado 2026-09-07]: 15 muestras `SUCCESS`/15 pedidas entre
+  `uwb_node_10` y `uwb_node_11`, media 341.9 cm, desvío estándar 2.1 cm —
+  dispersión baja, consistente con lo esperado.
 - Al terminar de medir un par: `qorvo STOP` en ambos nodos, luego
   `qorvo off` y desconexión BLE.
 
