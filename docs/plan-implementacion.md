@@ -35,7 +35,7 @@
 | F2b | Porta `transport/` + `core/` (BleTransport, DwmCliClient, parsers) desde `dwm3001c_cli` para dejar de depender de él en runtime | `refactor/vendoriza-transporte-ble` | F2 | ✅ |
 | F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ✅ (verificado contra hardware real 2026-09-07) |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ✅ |
-| F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ⬜ |
+| F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ✅ |
 | F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ⬜ |
 | F7 | Herramienta visual (GUI) — reusa `ranging/`, `report/`, `config/`, `geometry/` sin cambios | `feature/f7-gui` | F6 (validado en hardware real) | ⬜ |
 
@@ -368,6 +368,18 @@ y `.md`, mismo patrón que `validation/report.py` del repo hermano:
 
 Tests: sobre una lista de `PairResult` fija, verificar contenido exacto
 del JSON y presencia/ausencia de la sección de fallos en el Markdown.
+
+**Implementado:** `DEFAULT_TOLERANCE_CM = 5.0` en `report/build.py`, con
+el `TODO(confirmar-con-usuario)` explícito en el código — sigue siendo un
+valor sugerido, no confirmado; F6 lo va a exponer como `--tolerance-cm`
+con este mismo default, así que confirmarlo más adelante no requiere
+tocar `report/`. Se agregó un campo `detalle: str | None` a `PairResult`
+(no estaba en el esquema original del plan) para poder mostrar la
+excepción de `MeasuredPair.error` en la sección de fallos del Markdown sin
+tener que recorrer los `MeasuredPair` originales por separado. **La Fase
+F5 queda cerrada** (sin verificar contra hardware real: no hay BLE
+involucrado en `report/`, todo el input ya viene resuelto en
+`MeasuredPair`).
 
 ## 8. F6 — CLI
 
