@@ -5,11 +5,11 @@ nRF52840 de `I-mop-nrf52840-fw`) y la compara contra la distancia
 geométrica calculada a partir de las posiciones declaradas en un archivo de
 ambiente TOML.
 
-> **Estado:** en planificación/andamiaje (Fase F0 — ver
-> [docs/plan-implementacion.md](docs/plan-implementacion.md)). Este README
-> se actualiza a medida que cada fase se implementa; lo que describe la
-> sección 4 (Uso) es el comportamiento objetivo, no necesariamente lo que
-> ya funciona hoy.
+> **Estado:** Fases F0–F6 completas y **verificadas contra hardware real**
+> (2026-09-07) — el flujo completo (`imop-measure run`) funciona de punta
+> a punta. Falta F7 (herramienta visual). Ver
+> [docs/plan-implementacion.md](docs/plan-implementacion.md) para el
+> detalle fase por fase.
 
 ## 1. Qué hace este proyecto
 
@@ -17,9 +17,9 @@ ambiente TOML.
 |---|---|
 | 1. Leer ambiente | Carga `environments/sala_XX.toml`: nombre, MAC BLE, dirección UWB y posición de cada nodo. |
 | 2. Calcular distancias | Distancia euclídea 3D entre todos los pares de nodos, a partir de sus posiciones declaradas. |
-| 3. Medir por BLE/UWB | Para cada par: conecta por BLE a los dos nodos, configura uno como iniciador (`INITF`) y el otro como respondedor (`RESPF`), corre una sesión de ranging y promedia N muestras de distancia real. |
-| 4. Repetir | Ídem para todos los pares del ambiente. |
-| 5. Reportar | Genera un reporte (JSON + Markdown) con distancia calculada vs. medida, error absoluto y porcentual por par. |
+| 3. Medir por BLE/UWB | Conecta por BLE a un par de nodos, configura uno como iniciador (`INITF`) y el otro como respondedor (`RESPF`), corre una sesión de ranging y promedia N muestras de distancia real. |
+| 4. Repetir en ambas direcciones | Cada nodo pasa por turno como iniciador contra todos los demás como respondedores — no un solo valor por par, sino uno por dirección (detecta asimetrías). |
+| 5. Reportar | Genera un reporte (JSON + Markdown) con distancia calculada vs. medida, error absoluto y porcentual por dirección medida. |
 
 Hoy es un **script/CLI**. El objetivo declarado es que evolucione a una
 **herramienta visual** una vez validado el flujo por línea de comandos —
@@ -53,14 +53,25 @@ pip install -e .[dev]
 Ver [docs/formato-ambiente-toml.md](docs/formato-ambiente-toml.md).
 Ejemplo real: [environments/sala_20.toml](environments/sala_20.toml).
 
-## 5. Uso (objetivo — ver estado real en la tabla de fases)
+## 5. Uso
 
 ```powershell
 imop-measure run --environment environments/sala_20.toml --samples 30 --tolerance-cm 5
 ```
 
-Genera `reports/medicion-<sala_id>-<timestamp>.json` y `.md` con la
-comparación calculada vs. medida por par de nodos.
+Mide, para cada nodo activo del ambiente, la distancia real contra todos
+los demás **en ambas direcciones** (cada nodo pasa por turno como
+iniciador y como respondedor — ver
+[docs/arquitectura.md](docs/arquitectura.md) decisión D6), y genera
+`reports/medicion-<sala_id>-<timestamp>.json` y `.md` con la comparación
+calculada vs. medida por dirección.
+
+> **Nota:** si `posicion` en el TOML todavía no refleja la ubicación
+> física real de los nodos (ver
+> [docs/formato-ambiente-toml.md](docs/formato-ambiente-toml.md)), el
+> reporte va a marcar `FAIL` aunque la medición BLE/UWB haya salido bien
+> — es la distancia *calculada* la que está desactualizada, no la
+> medición.
 
 ## 6. Documentación
 
