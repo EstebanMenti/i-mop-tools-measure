@@ -19,14 +19,16 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    "pytest-qt>=4.5",
+    "i-mop-tools-measure[gui]",
 ]
 gui = [
     "PySide6>=6.7",
-    "pyqtgraph>=0.13",
 ]
 
 [project.scripts]
 imop-measure = "imop_measure.app.cli:main"
+imop-measure-gui = "imop_measure.gui.app:main_gui"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -38,6 +40,13 @@ extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Qt exige nombres camelCase para overrides (rowCount, headerData,
+# moveToThread, etc.) y el patron QModelIndex() como default de argumento
+# — no se puede evitar sin romper la API de Qt. Mismo criterio que
+# i-mop-qorvo-CLI-script.
+"src/imop_measure/gui/**/*.py" = ["N802", "B008"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -37,7 +37,7 @@
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ✅ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ✅ |
 | F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ✅ (verificado contra hardware real 2026-09-07) |
-| F7 | Herramienta visual (GUI) — reusa `ranging/`, `report/`, `config/`, `geometry/` sin cambios | `feature/f7-gui` | F6 (validado en hardware real) | ⬜ |
+| F7 | Herramienta visual (GUI) — reusa `ranging/`, `report/`, `config/`, `geometry/` sin cambios | `feature/f7-gui` | F6 (validado en hardware real) | ✅ (verificado contra hardware real 2026-09-07) |
 
 ## 2. F0 — Andamiaje
 
@@ -444,17 +444,85 @@ disco (`report/write.py`) no estaban afectados (usan `encoding="utf-8"`
 explícito) y mantienen `→`/acentos sin problema. **La Fase F6 queda
 cerrada.**
 
-## 9. F7 — Herramienta visual (roadmap, no implementar todavía)
+## 9. F7 — Herramienta visual
 
-Cuando F6 esté validado contra hardware real: agregar `gui/` siguiendo el
-mismo patrón que `dwm3001c_cli.gui` (PySide6 + pyqtgraph como dependencias
-opcionales `[gui]`, ver `CLAUDE.md` §4). La GUI consume `config/`,
-`geometry/`, `ranging/campaign.run_campaign` (con `on_pair_done` para
-progreso) y `report/` **sin modificarlos** — si hace falta cambiar algo de
-esas capas para que la GUI funcione, es señal de que F0-F6 dejaron una
-abstracción incorrecta y hay que corregirla ahí, no parchear desde la GUI.
-No hay fecha ni alcance detallado todavía — se especifica en detalle
-cuando se llegue a esta fase.
+**Alcance de la v1 (decidido con el usuario tras cerrar F6):** una sola
+ventana que corre una campaña completa con progreso en vivo — el
+equivalente visual de `imop-measure run`, no un visor de reportes ya
+generados ni un editor del TOML (eso queda para una v2 si hace falta).
+Framework: **PySide6** (ya anticipado en `CLAUDE.md` §4 y en
+`pyproject.toml` como extra `[gui]`), mismo patrón de threading que
+`dwm3001c_cli.gui` del repo hermano — ver decisión abajo.
+
+`gui/` consume `config/`, `ranging/campaign.run_campaign` (con
+`on_pair_done` para progreso) y `report/` **sin modificarlos** — si hace
+falta cambiar algo de esas capas para que la GUI funcione, es señal de
+que F0-F6 dejaron una abstracción incorrecta y hay que corregirla ahí, no
+parchear desde la GUI.
+
+**Decisión — threading:** `run_campaign` es bloqueante (conexiones BLE
+reales, minutos de duración) — correrlo en el hilo de UI congelaría la
+ventana. Igual que `dwm3001c_cli.gui.workers`: un `QObject` (no una
+subclase de `QThread`) movido a un `QThread` con `moveToThread()`, no
+`QThreadPool` (necesita señales de progreso continuas, no un resultado
+único). El `run()` del worker atrapa **cualquier** excepción
+(`except Exception`, no solo `MeasureError`) y la emite por señal
+`failed` — el repo hermano documenta un bug real: un worker que deja
+escapar una excepción en silencio deja el botón de "Ejecutar" trabado
+para siempre sin ningún mensaje. Un helper `start_worker()` (portado del
+mismo módulo) arma el `QThread` y conecta `started`/`finished`.
+
+Módulos (`src/imop_measure/gui/`):
+
+| Módulo | Responsabilidad |
+|---|---|
+| `app.py` | Entry point `main_gui()` (comando `imop-measure-gui`): crea `QApplication` + `MainWindow`. |
+| `models.py` | `CampaignResultsModel(QAbstractTableModel)`: misma tabla que el resumen del CLI (iniciador, respondedor, calculada, medida, diferencia m/%, revisar, estado), coloreada por `estado`. Se llena fila por fila a medida que llegan resultados, no de una vez al final. |
+| `worker.py` | `CampaignWorker(QObject)`: `run()` hace `load_ambiente` → `ranging.campaign.run_campaign` (cada `on_pair_done` arma un `PairResult` de a uno vía `report.build.build_results([medido], ...)` y lo emite por señal `pair_measured`, acumulándolo también en una lista local) → `report.write.write_reports` con esa lista acumulada. Señales: `pair_measured(object)`, `finished(list, object, object)` (resultados, path json, path md), `failed(str)`. También expone `start_worker()`. |
+| `main_window.py` | `MainWindow(QMainWindow)`: formulario (archivo de ambiente con selector `QFileDialog`, muestras, tolerancia, umbral de revisión, carpeta de reportes — mismos parámetros que `imop-measure run`), botón "Ejecutar campaña", tabla en vivo, etiqueta de estado/resumen, etiqueta con las rutas del reporte al terminar. |
+
+**Dependencias:** solo `PySide6` por ahora. `pyqtgraph` se saca de
+`pyproject.toml` extra `[gui]` hasta que haga falta un gráfico de verdad
+(ej. un plano de la sala con los nodos) — no instalar una dependencia sin
+usarla (`CLAUDE.md` §4).
+
+**Tests:** con `pytest-qt` (nuevo dev-dependency, mismo que el repo
+hermano). `CampaignWorker.run()` con `load_ambiente`/`run_campaign`/
+`write_reports` mockeados (sin BLE real, sin ventana): verifica que emite
+`pair_measured` por cada resultado, `finished` con la lista completa y
+las rutas del reporte, y que **nunca deja escapar una excepción** —
+siempre emite `failed` en su lugar. `CampaignResultsModel`: agregar,
+limpiar, `rowCount`/`data` devuelven lo esperado. `MainWindow` se deja
+sin test de interacción profunda por ahora (ver nota del repo hermano:
+las vistas son la parte más costosa de testear de una GUI Qt) — alcanza
+con confirmar que se construye sin error.
+
+Criterio de aceptación: `imop-measure-gui` abre una ventana, se puede
+elegir `environments/sala_20.toml`, correr una campaña contra hardware
+real sin congelar la ventana, ver el progreso fila por fila, y terminar
+mostrando las rutas del reporte generado — mismo resultado que
+`imop-measure run`, mostrado visualmente.
+
+**Verificado contra hardware real (2026-09-07):** `imop-measure-gui`
+abre la ventana correctamente (confirmado por título de ventana, sin
+capturas de pantalla — ver nota de privacidad más abajo). Disparando
+`_on_run_clicked()` programáticamente (mismo camino de código que un
+click real) contra los 2 nodos físicos: la campaña completa corrió en
+~95 s en el `QThread` de background mientras el bucle de eventos de la
+ventana siguió respondiendo (`processEvents()` devolvió el control 1885
+veces durante esos 95 s, sin bloquearse ni una vez) — confirma que la UI
+no se congela mientras mide. Terminó con 2 resultados y el reporte
+escrito correctamente. **La Fase F7 (v1) queda cerrada.**
+
+> **Nota de proceso:** al intentar verificar la ventana visualmente se
+> tomó por error una captura de **toda la pantalla** (no solo la
+> ventana de la app), que expuso de forma no intencional una
+> conversación privada de Mattermost del usuario en primer plano en ese
+> momento. Se borró el archivo de inmediato sin usar ni referenciar su
+> contenido. La verificación real se hizo sin capturas de pantalla,
+> comprobando el título de la ventana por proceso
+> (`Get-Process | Where-Object MainWindowTitle`) y validando el flujo
+> mediante código, no capturas visuales.
 
 ## 10. Resumen de valores por defecto
 
