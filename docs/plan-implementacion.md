@@ -33,7 +33,7 @@
 | F1 | `config/` + `geometry/`: leer TOML, calcular distancias y pares | `feature/f1-config-geometria` | F0 | ✅ |
 | F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ✅ |
 | F2b | Porta `transport/` + `core/` (BleTransport, DwmCliClient, parsers) desde `dwm3001c_cli` para dejar de depender de él en runtime | `refactor/vendoriza-transporte-ble` | F2 | ✅ |
-| F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ⬜ |
+| F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ✅ (sin verificar contra hardware real todavía) |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ⬜ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ⬜ |
 | F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ⬜ |
@@ -244,13 +244,18 @@ Secuencia exacta (ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md) §3-4):
 
 Tests: con fakes de `DwmCliClient`/`BleTransport` (mismo patrón
 `FakeTransport` del repo hermano) alimentados con notificaciones
-`SESSION_INFO_NTF` capturadas reales — no requieren hardware. Casos:
-todas SUCCESS, mezcla SUCCESS/RX_TIMEOUT, 0% SUCCESS (debe marcar el par
-como error, no crashear).
+`SESSION_INFO_NTF` capturadas reales — no requieren hardware. Casos
+implementados en `tests/test_ranging_pair_runner.py`: todas SUCCESS,
+mezcla SUCCESS/RX_TIMEOUT, 0% SUCCESS (marca el par como error, no
+crashea), fallo de conexión BLE. Ejercitan `BleTransport`/`DwmCliClient`
+reales inyectando un `FakeBleakClient` scripteado (no un doble de más
+alto nivel), para probar el código de producción real.
 
-Tests marcados `@pytest.mark.hardware` (excluidos por defecto): correr
-`run_pair` contra dos nodos reales y verificar que la distancia medida
-esté en un rango físicamente razonable.
+**Pendiente:** tests marcados `@pytest.mark.hardware` (excluidos por
+defecto) que corran `run_pair` contra dos nodos reales y verifiquen que
+la distancia medida esté en un rango físicamente razonable — no
+implementados todavía, requieren hardware disponible para escribirlos
+contra capturas reales (no inventar el formato de respuesta).
 
 ## 6. F4 — Campaña completa (`campaign.py`)
 
@@ -258,7 +263,7 @@ esté en un rango físicamente razonable.
 def run_campaign(
     ambiente: Ambiente,
     *,
-    session: SessionConfig,
+    session: SessionParams,
     n_samples: int,
     on_pair_done: Callable[[MeasuredPair], None] | None = None,
 ) -> list[MeasuredPair]:
