@@ -34,7 +34,7 @@
 | F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ✅ |
 | F2b | Porta `transport/` + `core/` (BleTransport, DwmCliClient, parsers) desde `dwm3001c_cli` para dejar de depender de él en runtime | `refactor/vendoriza-transporte-ble` | F2 | ✅ |
 | F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ✅ (verificado contra hardware real 2026-09-07) |
-| F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ⬜ |
+| F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ✅ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ⬜ |
 | F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ⬜ |
 | F7 | Herramienta visual (GUI) — reusa `ranging/`, `report/`, `config/`, `geometry/` sin cambios | `feature/f7-gui` | F6 (validado en hardware real) | ⬜ |
@@ -206,27 +206,34 @@ Criterio de aceptación: `pip install -e .[dev]` sin ningún paso adicional
 
 ```python
 def run_pair(
-    anchor_a: Anchor,
-    anchor_b: Anchor,
     *,
+    initiator: Anchor,
+    responder: Anchor,
     session: SessionParams,
     n_samples: int,
     ble_timeouts: dict[str, float],
 ) -> MeasuredPair:
-    """Conecta a ambos nodos, configura A=RESPF/B=INITF, promedia n_samples
-    lecturas SUCCESS de SESSION_INFO_NTF, detiene y desconecta ambos."""
+    """Conecta a ambos nodos, configura responder=RESPF/initiator=INITF,
+    promedia n_samples lecturas SUCCESS de SESSION_INFO_NTF, detiene y
+    desconecta ambos."""
 ```
+
+`initiator`/`responder` son keyword-only a propósito: la versión inicial
+de F3 tenía `anchor_a`/`anchor_b` posicionales con una convención
+implícita (`a`=respondedor, `b`=iniciador) fácil de invocar al revés sin
+que nada lo marque como error — se corrigió después de F4 (ver más abajo)
+a nombres explícitos.
 
 Secuencia exacta (ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md) §3-4):
 
-1. Conectar BLE a `anchor_a` y `anchor_b` (dos
+1. Conectar BLE a `responder` e `initiator` (dos
    `transport.ble_link.BleTransport` + dos `core.client.DwmCliClient`,
    ambos ya portados y disponibles desde F2b — ver
    [arquitectura.md](arquitectura.md) §2.3.1 —, timeouts desde
-   `ble_timeouts`).
+   `ble_timeouts`). El respondedor se conecta primero.
 2. `qorvo on` en ambos, esperar settle.
 3. `qorvo STOP` + `qorvo STAT` en ambos, confirmar modo `NONE`.
-4. `RESPF` en `anchor_a`, después `INITF` en `anchor_b` (parámetros
+4. `RESPF` en `responder`, después `INITF` en `initiator` (parámetros
    completos, `ADDR`/`PADDR` cruzados vía `addressing.py`).
 5. Leer notificaciones del cliente iniciador hasta juntar `n_samples`
    muestras `SUCCESS` o agotar un timeout máximo (usar
@@ -238,9 +245,10 @@ Secuencia exacta (ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md) §3-4):
    fallido no debe abortar la campaña completa (igual criterio que
    `validation/runner.py` del repo hermano).
 
-`MeasuredPair`: `anchor_a`, `anchor_b`, `distance_cm_samples: list[int]`,
-`mean_cm: float | None`, `std_cm: float | None`, `n_success: int`,
-`n_requested: int`, `error: str | None`.
+`MeasuredPair`: `initiator: Anchor`, `responder: Anchor`,
+`distance_cm_samples: list[int]`, `mean_cm: float | None`,
+`std_cm: float | None`, `n_success: int`, `n_requested: int`,
+`error: str | None`.
 
 Tests: con fakes de `DwmCliClient`/`BleTransport` (mismo patrón
 `FakeTransport` del repo hermano) alimentados con notificaciones
@@ -274,14 +282,49 @@ def run_campaign(
     n_samples: int,
     on_pair_done: Callable[[MeasuredPair], None] | None = None,
 ) -> list[MeasuredPair]:
-    """Itera geometry.pairs.all_pairs(ambiente.anchors), corre pair_runner.run_pair
-    por cada uno, no aborta si un par falla, soporta callback de progreso
-    (para reusar desde una futura GUI)."""
+    """Itera cada nodo como iniciador contra todos los demas como
+    respondedores (N*(N-1) mediciones direccionales), corre
+    pair_runner.run_pair por cada una, no aborta si una falla, soporta
+    callback de progreso (para reusar desde una futura GUI)."""
 ```
 
-Criterio de aceptación: sobre un ambiente fake de 3 anclas (3 pares), con
-`pair_runner.run_pair` mockeado, `run_campaign` devuelve 3 resultados
-incluso si uno de los tres levanta una excepción simulada.
+**Decisión tomada (pedido explícito del usuario tras cerrar F3):** cada
+nodo del ambiente mide contra **todos** los demás en **ambos roles** —
+primero como iniciador contra cada respondedor, después ese mismo nodo
+pasa a respondedor cuando le toca el turno a otro como iniciador. Esto da
+`N*(N-1)` mediciones direccionales (permutaciones, no combinaciones) en
+vez de `N*(N-1)/2` pares sin orden — a diferencia de la distancia
+geométrica (`geometry.pairs.all_pairs`, simétrica), la distancia UWB
+medida puede diferir según quién inicia, así que:
+
+- Las dos direcciones de un mismo par físico (`A→B` y `B→A`) se miden y
+  se **reportan por separado** (no se promedian) — permite detectar
+  asimetrías de hardware/protocolo entre nodos. Ver F5, `PairResult`.
+- Por ahora se reconecta todo (ambos nodos) en cada medición direccional,
+  aunque el mismo nodo actúe de iniciador varias veces seguidas contra
+  distintos respondedores — más simple de razonar, y con la cantidad de
+  nodos actual (2) el costo extra de reconectar es mínimo. Reusar la
+  conexión BLE del iniciador entre respondedor y respondedor (evitar
+  reconectarlo en cada vuelta) es una optimización de `pair_runner.py`
+  que se puede hacer más adelante si el tiempo total de campaña con más
+  nodos lo justifica — no implementada todavía.
+- `pair_runner.run_pair` pasó a tener `initiator`/`responder`
+  keyword-only en vez de `anchor_a`/`anchor_b` posicionales (ver F3
+  arriba), para que quién es cada rol quede explícito en cada llamado.
+
+Criterio de aceptación: sobre un ambiente fake de 3 anclas (`N*(N-1)=6`
+mediciones direccionales), con `pair_runner.run_pair` mockeado,
+`run_campaign` devuelve 6 resultados incluso si una de las seis levanta
+una excepción simulada.
+
+**Verificado contra hardware real (2026-09-07):**
+`test_run_campaign_against_real_nodes` (`@pytest.mark.hardware`) corrió
+`run_campaign` de punta a punta contra las 2 anclas activas de
+`environments/sala_20.toml` — las 2 mediciones direccionales posibles
+(`uwb_node_10→uwb_node_11` y `uwb_node_11→uwb_node_10`) completaron sin
+error. Con solo 2 nodos no se pudo ejercitar "varias mediciones, una
+falla" contra hardware real (hacen falta 3+); ese caso sigue cubierto
+solo con mocks. **La Fase F4 queda cerrada.**
 
 ## 7. F5 — Reporte
 
@@ -289,16 +332,22 @@ incluso si uno de los tres levanta una excepción simulada.
 ```python
 @dataclass(frozen=True)
 class PairResult:
-    anchor_a: str          # nombre
-    anchor_b: str          # nombre
-    distance_calc_m: float
-    distance_measured_m: float | None   # None si el par falló
+    initiator: str          # nombre — quien inicio esta medicion direccional
+    responder: str          # nombre
+    distance_calc_m: float  # geometrica, simetrica: la misma para A->B y B->A
+    distance_measured_m: float | None   # None si la medicion fallo
     error_abs_cm: float | None
     error_pct: float | None
     n_samples_success: int
     n_samples_requested: int
     estado: Literal["PASS", "FAIL", "ERROR"]
 ```
+
+Una fila por `MeasuredPair` de `run_campaign` (F4) — es decir, **una fila
+por dirección**, no una por par físico: el mismo par de nodos aparece dos
+veces (`A→B` y `B→A`), cada una con su propia `distance_measured_m` pero
+la misma `distance_calc_m` (la distancia geométrica no tiene dirección).
+Ver decisión de F4 más arriba.
 
 `estado` se calcula en `report/build.py`: `ERROR` si
 `distance_measured_m is None`; si no, `PASS` si `error_abs_cm` está dentro

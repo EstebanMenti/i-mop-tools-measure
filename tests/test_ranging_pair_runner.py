@@ -7,6 +7,11 @@ transporte/cliente por dobles de mas alto nivel — asi se prueba el codigo
 de produccion real, no una version simplificada de el. Las marcadas
 `@pytest.mark.hardware` sí requieren los nodos fisicos de
 environments/sala_20.toml, y quedan excluidas por defecto.
+
+`ANCHOR_A` siempre se usa como `responder` y `ANCHOR_B` como `initiator`
+en estos tests (arbitrario, para que `RESPF_COMMAND`/`INITF_COMMAND`
+queden fijos) — `run_pair` en si es simetrico respecto a cual anda es
+cual, ver `ranging/campaign.py` que llama con ambas combinaciones.
 """
 
 from collections.abc import Callable
@@ -44,8 +49,8 @@ STAT_NONE = (
 )
 
 # Comandos exactos que arma imop_measure.core.client._format_app_options
-# para SessionParams() con addr=10/paddr=11 (respondedor) y addr=11/paddr=10
-# (iniciador) — ver ranging/session.py.
+# para SessionParams() con ANCHOR_A=responder (addr=10/paddr=11) y
+# ANCHOR_B=initiator (addr=11/paddr=10) — ver ranging/session.py.
 RESPF_COMMAND = (
     "RESPF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
     "-VUPPER=01:02:03:04:05:06:07:08 -ADDR=10 -PADDR=11"
@@ -108,8 +113,8 @@ def test_run_pair_all_success() -> None:
     fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
 
     result = run_pair(
-        ANCHOR_A,
-        ANCHOR_B,
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
         session=SessionParams(),
         n_samples=2,
         ble_timeouts={},
@@ -135,8 +140,8 @@ def test_run_pair_mixed_success_and_timeout() -> None:
     fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
 
     result = run_pair(
-        ANCHOR_A,
-        ANCHOR_B,
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
         session=SessionParams(),
         n_samples=1,
         ble_timeouts={},
@@ -156,8 +161,8 @@ def test_run_pair_zero_success_marks_error_without_raising() -> None:
     fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
 
     result = run_pair(
-        ANCHOR_A,
-        ANCHOR_B,
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
         session=SessionParams(),
         n_samples=1,
         ble_timeouts={},
@@ -171,12 +176,12 @@ def test_run_pair_zero_success_marks_error_without_raising() -> None:
 
 
 def test_run_pair_connect_failure_marks_error_without_raising() -> None:
-    fake_a = FakeBleakClient(ANCHOR_A.mac, fail_connect=True)
+    fake_a = FakeBleakClient(ANCHOR_A.mac, fail_connect=True)  # ANCHOR_A = responder
     fake_b = FakeBleakClient(ANCHOR_B.mac)
 
     result = run_pair(
-        ANCHOR_A,
-        ANCHOR_B,
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
         session=SessionParams(),
         n_samples=1,
         ble_timeouts={},
@@ -185,7 +190,9 @@ def test_run_pair_connect_failure_marks_error_without_raising() -> None:
 
     assert result.error is not None
     assert result.n_success == 0
-    assert fake_b.is_connected is False  # nunca se llego a abrir el segundo transporte
+    # El respondedor se conecta primero (ver pair_runner.run_pair); si
+    # falla, el iniciador nunca llega a abrirse.
+    assert fake_b.is_connected is False
 
 
 def test_run_pair_handles_real_three_fragment_notification() -> None:
@@ -212,8 +219,8 @@ def test_run_pair_handles_real_three_fragment_notification() -> None:
     fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
 
     result = run_pair(
-        ANCHOR_A,
-        ANCHOR_B,
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
         session=SessionParams(),
         n_samples=1,
         ble_timeouts={},
@@ -229,16 +236,19 @@ def test_run_pair_against_real_nodes() -> None:
     """Corre run_pair contra los nodos fisicos de environments/sala_20.toml.
 
     Requiere tener ambos nodos encendidos y al alcance de BLE. Verificado
-    manualmente el 2026-09-07 contra uwb_node_10/uwb_node_11 reales:
-    15/15 muestras SUCCESS, media 341.9 cm, desvio 2.1 cm.
+    manualmente el 2026-09-07 con uwb_node_10 como respondedor y
+    uwb_node_11 como iniciador (reales): 15/15 muestras SUCCESS, media
+    341.9 cm, desvio 2.1 cm. La direccion inversa (node_10 iniciador,
+    node_11 respondedor) la ejercita
+    test_ranging_campaign.py::test_run_campaign_against_real_nodes.
     """
     toml_path = Path(__file__).resolve().parent.parent / "environments" / "sala_20.toml"
     ambiente = load_ambiente(toml_path)
-    anchor_a, anchor_b = ambiente.anchors[0], ambiente.anchors[1]
+    node_responder, node_initiator = ambiente.anchors[0], ambiente.anchors[1]
 
     result = run_pair(
-        anchor_a,
-        anchor_b,
+        initiator=node_initiator,
+        responder=node_responder,
         session=SessionParams(),
         n_samples=10,
         ble_timeouts=ambiente.ble_timeouts,
