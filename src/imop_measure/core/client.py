@@ -1,0 +1,458 @@
+"""Cliente del protocolo CLI del Qorvo (DWM3001C/QM33), via BLE.
+
+Portado de `dwm3001c_cli.core.client` (repo hermano
+`i-mop-qorvo-CLI-script`, commit ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd)
+— ver docs/arquitectura.md decision D1 y docs/protocolo-ble-qorvo.md.
+
+`DwmCliClient` coordina el envio de comandos y la interpretacion de las
+respuestas sobre un `Transport` ya construido. No conoce Typer/Rich (regla
+de arquitectura, ver docs/arquitectura.md decision D2) ni abre transportes
+por su cuenta.
+
+Comportamientos del firmware contemplados:
+
+- El nodo hace **eco** del comando enviado; se descarta.
+- Las respuestas de comandos terminan con una linea `ok`; se usa como
+  marcador de fin, con un periodo de silencio como respaldo.
+- Los comandos de servicio e IDLE solo funcionan en modo NONE — usar
+  `DwmCliClient.ensure_mode_none` antes de invocarlos.
+"""
+
+import logging
+import re
+import time
+from collections.abc import Callable, Mapping
+
+from imop_measure.core.models import CalKey, ChipId, DeviceInfo, Measurement
+from imop_measure.core.parsers import (
+    is_ok,
+    parse_calkey_line,
+    parse_decaid,
+    parse_listcal,
+    parse_session_info,
+    parse_stat,
+)
+from imop_measure.errors import (
+    CommandRejectedError,
+    CommandTimeoutError,
+    UnexpectedModeError,
+)
+from imop_measure.transport.base import Transport
+
+logger = logging.getLogger(__name__)
+
+_VALID_APPS = {"LISTENER", "INITF", "RESPF", "NONE"}
+
+# Tras STOP, el firmware tarda un instante en volver a NONE: un STAT
+# inmediato aun reporta la app anterior corriendo.
+_STOP_SETTLE_S = 0.3
+_PRFSETS = {"BPRF3", "BPRF4", "BPRF5", "BPRF6"}
+_RRUS = {"SSTWR", "DSTWR", "SSTWRNDEF", "DSTWRNDEF"}
+_VUPPER_RE = re.compile(r"^([0-9A-Fa-f]{2}:){7}[0-9A-Fa-f]{2}$")
+
+# Orden canonico de emision de opciones de INITF/RESPF.
+_OPTION_ORDER = (
+    "chan",
+    "prfset",
+    "pcode",
+    "slot",
+    "block",
+    "round",
+    "rru",
+    "id",
+    "vupper",
+    "multi",
+    "hop",
+    "addr",
+    "paddr",
+)
+
+
+def _as_int(name: str, value: object, lo: int, hi: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ValueError(f"Opcion {name!r}: se espera un entero entre {lo} y {hi}; llego {value!r}")
+    return value
+
+
+def _format_app_options(params: Mapping[str, object]) -> list[str]:
+    """Valida y formatea las opciones de INITF/RESPF como `-OPCION=VALOR`.
+
+    Cualquier opcion fuera de la lista conocida, o valor fuera de rango,
+    es `ValueError` — nunca se envia al nodo un comando dudoso.
+    """
+    unknown = set(params) - set(_OPTION_ORDER)
+    if unknown:
+        raise ValueError(f"Opciones desconocidas: {sorted(unknown)}; validas: {_OPTION_ORDER}")
+
+    parts: list[str] = []
+    for name in _OPTION_ORDER:
+        if name not in params:
+            continue
+        value = params[name]
+        if name == "chan":
+            channel = _as_int(name, value, 5, 9)
+            if channel not in (5, 9):
+                raise ValueError(f"Opcion 'chan': solo canal 5 o 9; llego {channel}")
+            parts.append(f"-CHAN={channel}")
+        elif name == "prfset":
+            prfset = str(value).upper()
+            if prfset not in _PRFSETS:
+                raise ValueError(f"Opcion 'prfset': validos {sorted(_PRFSETS)}; llego {value!r}")
+            parts.append(f"-PRFSET={prfset}")
+        elif name == "pcode":
+            parts.append(f"-PCODE={_as_int(name, value, 9, 12)}")
+        elif name == "slot":
+            parts.append(f"-SLOT={_as_int(name, value, 2400, 65535)}")
+        elif name == "block":
+            parts.append(f"-BLOCK={_as_int(name, value, 1, 65535)}")
+        elif name == "round":
+            parts.append(f"-ROUND={_as_int(name, value, 1, 255)}")
+        elif name == "rru":
+            rru = str(value).upper()
+            if rru not in _RRUS:
+                raise ValueError(f"Opcion 'rru': validos {sorted(_RRUS)}; llego {value!r}")
+            parts.append(f"-RRU={rru}")
+        elif name == "id":
+            parts.append(f"-ID={_as_int(name, value, 1, 65535)}")
+        elif name == "vupper":
+            vupper = str(value)
+            if _VUPPER_RE.match(vupper) is None:
+                raise ValueError(
+                    f"Opcion 'vupper': formato XX:XX:XX:XX:XX:XX:XX:XX en hex; llego {value!r}"
+                )
+            parts.append(f"-VUPPER={vupper}")
+        elif name in ("multi", "hop"):
+            if not isinstance(value, bool):
+                raise ValueError(f"Opcion {name!r}: se espera bool; llego {value!r}")
+            if value:
+                parts.append(f"-{name.upper()}")
+        elif name in ("addr", "paddr"):
+            parts.append(f"-{name.upper()}={_as_int(name, value, 0, 65535)}")
+    return parts
+
+
+class DwmCliClient:
+    """Cliente de la consola CLI de un nodo (Qorvo, via el puente BLE).
+
+    Args:
+        transport: transporte ya construido (`BleTransport` o fake); el
+            cliente no lo abre ni lo cierra.
+        command_timeout_s: tiempo maximo por defecto para esperar la
+            respuesta de un comando.
+        quiet_period_s: periodo de silencio por defecto que marca el fin
+            de una respuesta sin `ok`/`KO` explicito (ver `send_command`).
+            Por BLE se midieron gaps de ~590ms incluso entre fragmentos de
+            una respuesta sana en el repo hermano — usar un valor de al
+            menos ~1.5s al construir un cliente sobre `BleTransport`
+            (default mas bajo, 0.3s, calibrado para USB/serie directo).
+    """
+
+    def __init__(
+        self,
+        transport: Transport,
+        *,
+        command_timeout_s: float = 2.0,
+        quiet_period_s: float = 0.3,
+    ) -> None:
+        self._transport = transport
+        self._command_timeout_s = command_timeout_s
+        self._quiet_period_s = quiet_period_s
+
+    @property
+    def name(self) -> str:
+        return self._transport.name
+
+    # ------------------------------------------------------------------ basicos
+
+    def send_command(
+        self,
+        cmd: str,
+        *,
+        quiet_period_s: float | None = None,
+        timeout_s: float | None = None,
+    ) -> list[str]:
+        """Envia un comando y recolecta su respuesta completa.
+
+        Fin de respuesta: linea `ok` (marcador del firmware) o
+        `quiet_period_s` sin lineas nuevas tras haber recibido algo. El
+        eco del comando se descarta.
+
+        Raises:
+            CommandTimeoutError: si no llego ninguna linea dentro del timeout.
+        """
+        limit = timeout_s if timeout_s is not None else self._command_timeout_s
+        quiet_period_s = quiet_period_s if quiet_period_s is not None else self._quiet_period_s
+        cmd_upper = cmd.strip().upper()
+        self._transport.write_line(cmd)
+        deadline = time.monotonic() + limit
+        lines: list[str] = []
+        received_any = False
+        echo_checked = False
+        while True:
+            line = self._transport.read_line(quiet_period_s)
+            if line is None:
+                if received_any:
+                    break
+                if time.monotonic() >= deadline:
+                    raise CommandTimeoutError(self.name, cmd, limit)
+                continue
+            stripped = line.strip()
+            if not echo_checked:
+                if stripped == "":
+                    # Linea vacia antes de cualquier contenido real
+                    # (frecuente como residuo entre comandos): se ignora
+                    # sin contar para el timeout ni para la deteccion de eco.
+                    continue
+                echo_checked = True
+                received_any = True
+                if stripped.upper() == cmd_upper:
+                    logger.debug("Eco descartado en %s: %s", self.name, line)
+                    continue
+                after_cmd = (
+                    stripped[len(cmd_upper) :] if stripped.upper().startswith(cmd_upper) else None
+                )
+                # Eco pegado sin separador solo si justo despues del texto
+                # del comando hay un caracter de espacio/control (o nada):
+                # si sigue un caracter de contenido (p.ej. ":") no es eco,
+                # es respuesta real que empieza igual que el comando
+                # (ej. "DIAG" -> "DIAG: 0").
+                if after_cmd is not None and (after_cmd == "" or after_cmd[0].isspace()):
+                    remainder = after_cmd.lstrip()
+                    logger.debug("Eco pegado a la respuesta en %s: %s", self.name, line)
+                    if not remainder:
+                        continue
+                    stripped = remainder
+                    line = remainder
+            else:
+                received_any = True
+            lines.append(line)
+            # "ok" y "KO" son los marcadores de fin de respuesta del
+            # firmware (exito y error respectivamente).
+            if stripped.lower() in ("ok", "ko"):
+                break
+        return lines
+
+    # ----------------------------------------------------------- estado y modo
+
+    def stat(self) -> DeviceInfo:
+        """`STAT`: informacion y modo actual del dispositivo."""
+        return parse_stat(self.send_command("STAT"))
+
+    def stop(self) -> None:
+        """`STOP`: detiene la aplicacion en curso; tolera silencio (sin app)."""
+        try:
+            self.send_command("STOP")
+        except CommandTimeoutError:
+            logger.debug("STOP sin respuesta en %s (¿ya estaba en NONE?)", self.name)
+
+    def ensure_mode_none(self) -> None:
+        """Lleva el dispositivo a modo NONE, requisito de los comandos de servicio.
+
+        Envia `STOP` y verifica con `STAT`; reintenta una vez.
+
+        Raises:
+            UnexpectedModeError: si tras dos intentos el modo no es NONE.
+        """
+        info: DeviceInfo | None = None
+        for attempt in range(2):
+            self.stop()
+            time.sleep(_STOP_SETTLE_S)
+            info = self.stat()
+            if info.mode == "NONE":
+                return
+            log = logger.warning if attempt else logger.debug
+            log("El dispositivo %s sigue en modo %s tras STOP", self.name, info.mode)
+        mode = info.mode if info is not None else "?"
+        raise UnexpectedModeError(
+            f"{self.name}: el dispositivo reporta modo {mode!r} y se requiere NONE"
+        )
+
+    # ------------------------------------------------------------- calibracion
+
+    def listcal(self) -> dict[str, CalKey]:
+        """`LISTCAL`: todas las claves de calibracion (requiere modo NONE)."""
+        return parse_listcal(self.send_command("LISTCAL", timeout_s=5.0))
+
+    def calkey_read(self, key: str) -> CalKey:
+        """`CALKEY <key>`: lee una clave de calibracion (requiere modo NONE).
+
+        En fw 1.1.0 la forma de lectura de `CALKEY` esta rota: responde
+        `KO` para cualquier clave, incluso las listadas por `LISTCAL`.
+        Como respaldo, la clave se lee filtrando `LISTCAL`.
+        """
+        lines = self.send_command(f"CALKEY {key}")
+        for line in lines:
+            try:
+                cal_key = parse_calkey_line(line)
+            except ValueError:
+                continue
+            if cal_key.name == key:
+                return cal_key
+        logger.debug("CALKEY %s sin respuesta directa en %s; leyendo via LISTCAL", key, self.name)
+        keys = self.listcal()
+        if key in keys:
+            return keys[key]
+        raise CommandRejectedError(
+            f"{self.name}: la clave {key} no existe "
+            f"(CALKEY respondio {lines!r} y no figura en LISTCAL)"
+        )
+
+    def calkey_write(self, key: str, value: int) -> CalKey:
+        """`CALKEY <key> <value>`: escribe y **verifica releyendo**.
+
+        El valor se envia en decimal: el firmware interpreta la entrada
+        en decimal (escribir `10` produce `0x0a`).
+
+        Raises:
+            CommandRejectedError: si la relectura no coincide con lo escrito.
+        """
+        if value < 0:
+            raise ValueError(f"Valor de clave negativo no soportado: {value}")
+        self.send_command(f"CALKEY {key} {value}")
+        written = self.calkey_read(key)
+        if written.value != value:
+            raise CommandRejectedError(
+                f"{self.name}: se escribio {key}={value} pero la relectura "
+                f"devolvio {written.value} — formato de entrada sospechoso"
+            )
+        return written
+
+    # ---------------------------------------------------------------- servicio
+
+    def save(self) -> None:
+        """`SAVE`: persiste la configuracion en NVM (modo NONE; no durante ranging)."""
+        lines = self.send_command("SAVE")
+        if not is_ok(lines):
+            raise CommandRejectedError(f"{self.name}: SAVE no confirmo ok; respuesta: {lines!r}")
+
+    def diag(self, enable: bool) -> None:
+        """`DIAG 0|1`: habilita/deshabilita el modo diagnostico (RSSI en ranging)."""
+        lines = self.send_command(f"DIAG {int(enable)}")
+        if not is_ok(lines):
+            raise CommandRejectedError(f"{self.name}: DIAG no confirmo ok; respuesta: {lines!r}")
+
+    def setapp(self, app: str) -> None:
+        """`SETAPP`: define la aplicacion por defecto tras reboot (requiere SAVE)."""
+        normalized = app.upper()
+        if normalized not in _VALID_APPS:
+            raise ValueError(f"App invalida {app!r}; validas: {sorted(_VALID_APPS)}")
+        lines = self.send_command(f"SETAPP {normalized}")
+        if not is_ok(lines):
+            raise CommandRejectedError(f"{self.name}: SETAPP no confirmo ok; respuesta: {lines!r}")
+
+    def decaid(self) -> ChipId:
+        """`DECAID`: identificacion del chip UWB."""
+        return parse_decaid(self.send_command("DECAID"))
+
+    def getotp(self) -> list[str]:
+        """`GETOTP`: volcado crudo de la memoria OTP."""
+        return self.send_command("GETOTP", timeout_s=5.0)
+
+    def thread(self) -> list[str]:
+        """`THREAD`: informacion cruda de hilos y memoria."""
+        return self.send_command("THREAD")
+
+    def help_cmd(self, cmd: str | None = None) -> list[str]:
+        """`HELP` o `HELP <CMD>`: ayuda cruda del firmware."""
+        return self.send_command("HELP" if cmd is None else f"HELP {cmd.upper()}")
+
+    def uart_status(self) -> list[str]:
+        """`UART` (solo consulta).
+
+        La escritura `UART 0/1` deliberadamente no se implementa: cambia
+        que interfaz fisica recibe la consola del nodo y puede dejarlo
+        inalcanzable por BLE — ver docs/protocolo-ble-qorvo.md seccion 5.
+        """
+        return self.send_command("UART")
+
+    def lcfg(self) -> list[str]:
+        """`LCFG`: configuracion cruda de la aplicacion LISTENER."""
+        return self.send_command("LCFG")
+
+    # ------------------------------------------------------------ aplicaciones
+
+    def start_initf(self, **params: object) -> None:
+        """`INITF`: inicia el rol INITIATOR de una sesion FiRa TWR.
+
+        Acepta solo las opciones documentadas (`chan`, `prfset`, `pcode`,
+        `slot`, `block`, `round`, `rru`, `id`, `vupper`, `multi`, `hop`,
+        `addr`, `paddr`), validadas antes de enviar. Recordar que pasar
+        cualquier parametro resetea los demas a default (ver
+        docs/protocolo-ble-qorvo.md seccion 3).
+        """
+        self._start_app("INITF", params)
+
+    def start_respf(self, **params: object) -> None:
+        """`RESPF`: inicia el rol RESPONDER de una sesion FiRa TWR (ver start_initf)."""
+        self._start_app("RESPF", params)
+
+    def start_listener(self) -> None:
+        """`LISTENER`: inicia el modo sniffer (sin parametros por ahora)."""
+        self._start_app("LISTENER", {})
+
+    def _start_app(self, app: str, params: Mapping[str, object]) -> None:
+        command = " ".join([app, *_format_app_options(params)])
+        lines = self.send_command(command)
+        if not is_ok(lines):
+            # Algunas apps pueden arrancar sin emitir ok inmediato; no se aborta.
+            logger.warning("%s en %s no confirmo ok; respuesta: %r", app, self.name, lines)
+
+    def read_notifications(
+        self,
+        *,
+        duration_s: float | None = None,
+        max_count: int | None = None,
+        on_measurement: Callable[[Measurement], None] | None = None,
+    ) -> list[Measurement]:
+        """Lee notificaciones `SESSION_INFO_NTF` durante una sesion de ranging.
+
+        Corta al alcanzar `max_count` mediciones o al vencer `duration_s`
+        (al menos uno es obligatorio). Sin `duration_s`, retorna en el
+        primer silencio del puerto. Las lineas que no son notificaciones
+        se ignoran; las notificaciones mal formadas se loguean y se
+        descartan.
+
+        Cada `SESSION_INFO_NTF` llega partida en dos lineas (la
+        continuacion arranca con un `\\r` residual); se reensambla
+        acumulando lineas hasta balancear las llaves `{}`.
+        """
+        if duration_s is None and max_count is None:
+            raise ValueError("Indicar duration_s y/o max_count")
+        deadline = None if duration_s is None else time.monotonic() + duration_s
+        measurements: list[Measurement] = []
+        fragment: list[str] = []
+        while True:
+            if max_count is not None and len(measurements) >= max_count:
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            line = self._transport.read_line(0.5)
+            if line is None:
+                if deadline is None:
+                    break
+                continue
+            stripped = line.strip()
+            if stripped.startswith("SESSION_INFO_NTF"):
+                fragment = [stripped]
+            elif fragment:
+                fragment.append(stripped)
+            else:
+                continue
+            joined = " ".join(fragment)
+            if joined.count("{") > joined.count("}"):
+                if len(fragment) > 8:
+                    logger.warning(
+                        "Notificacion inconclusa descartada en %s: %r", self.name, joined
+                    )
+                    fragment = []
+                continue
+            fragment = []
+            try:
+                measurement = parse_session_info(joined)
+            except ValueError:
+                logger.warning("Notificacion no parseable en %s: %r", self.name, joined)
+                continue
+            measurements.append(measurement)
+            if on_measurement is not None:
+                on_measurement(measurement)
+        return measurements

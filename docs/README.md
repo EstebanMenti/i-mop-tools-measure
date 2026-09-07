@@ -32,7 +32,7 @@ protocolo/hardware. Ante cualquier duda de detalle que no cubra
 |---|---|---|
 | `docs/referencia-comandos-fw110.md` | `../i-mop-qorvo-CLI-script` | Referencia exhaustiva de cada comando de firmware Qorvo (sintaxis, respuesta) |
 | `docs/verificacion-comandos-responder-ble.md` | `../i-mop-qorvo-CLI-script` | Validación en hardware real de comandos sobre el puente BLE, incluyendo una sesión de ranging completa |
-| `docs/arquitectura.md` | `../i-mop-qorvo-CLI-script` | Arquitectura del cliente BLE/Qorvo que este proyecto reutiliza |
+| `docs/arquitectura.md` | `../i-mop-qorvo-CLI-script` | Arquitectura del cliente BLE/Qorvo original, del que `imop_measure.transport`/`imop_measure.core` son un puerto adaptado |
 | `doc/00_BLE_Protocol_Specification.md` | `../I-mop-nrf52840-fw` | Especificación GATT completa del puente BLE (UUIDs, comando `qorvo`, límites) |
 | `doc/03_LED_Status_Indicator_Specification.md` | `../I-mop-nrf52840-fw` | Significado del LED de estado del nodo (útil para diagnóstico en campo) |
 

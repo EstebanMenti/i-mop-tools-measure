@@ -38,7 +38,7 @@ reescribir la lógica, tal como hizo `i-mop-qorvo-CLI-script` con `dwm-gui`.
 
 | Repo | Qué aporta |
 |---|---|
-| `../i-mop-qorvo-CLI-script` | CLI Python ya validada en hardware real contra estos mismos nodos: transporte BLE (`transport/ble_link.py`), cliente de comandos Qorvo (`core/client.py`), parsers de respuesta (`core/parsers.py`), generación de reportes (`validation/report.py`). **Preferir reusar/depender de este código antes que reimplementarlo.** |
+| `../i-mop-qorvo-CLI-script` | CLI Python ya validada en hardware real contra estos mismos nodos. Su transporte BLE (`transport/ble_link.py`) y cliente de comandos Qorvo (`core/client.py`, `core/parsers.py`) están **portados** en `src/imop_measure/{transport,core}/` (ver [docs/arquitectura.md](docs/arquitectura.md) decisión D1) — este proyecto no depende de tenerlo instalado, pero cualquier fix de protocolo descubierto ahí debe portarse acá a mano. |
 | `../I-mop-nrf52840-fw` | Firmware del puente BLE. `doc/00_BLE_Protocol_Specification.md` es la especificación autoritativa del protocolo GATT y del comando `qorvo`. |
 
 Referencia condensada y específica a este proyecto:
@@ -105,9 +105,9 @@ exhaustivo de cada comando de firmware, consultar
 ## 3. Testing
 
 - `pytest`. Los tests en `tests/` **no requieren hardware** por defecto:
-  se usan transportes/clientes falsos (reutilizando o imitando el patrón
-  `FakeTransport` del repo hermano) con capturas reales de firmware como
-  fixtures.
+  se usan transportes/clientes falsos (`tests/fakes.py`: `FakeTransport` y
+  `FakeBleakClient`, portados del repo hermano) con capturas reales de
+  firmware como fixtures.
 - Tests que sí requieren nodos físicos conectados se marcan
   `@pytest.mark.hardware` y quedan excluidos por defecto
   (`-m "not hardware"`).
@@ -119,11 +119,12 @@ exhaustivo de cada comando de firmware, consultar
 
 ## 4. Dependencias
 
-Mínimas y justificadas. Base autorizada: `typer`, `rich`. Para BLE/protocolo
-Qorvo: reusar `dwm3001c-cli` (repo `../i-mop-qorvo-CLI-script`) instalado en
-modo editable desde su path local — **no reimplementar** el transporte BLE
-ni el parseo de comandos Qorvo desde cero (ver
-[docs/arquitectura.md](docs/arquitectura.md) §3, decisión D1).
+Mínimas y justificadas. Base autorizada: `typer`, `rich`, `bleak` (BLE).
+El transporte BLE y el cliente de comandos Qorvo están **portados** dentro
+de este proyecto (`src/imop_measure/{transport,core}/`, ver
+[docs/arquitectura.md](docs/arquitectura.md) decisión D1) — no reimplementar
+ni volver a depender del repo hermano en tiempo de ejecución; si aparece un
+fix de protocolo en `i-mop-qorvo-CLI-script`, portarlo a mano acá.
 Dev: `pytest`, `ruff`, `mypy`.
 
 Cualquier dependencia nueva se agrega solo si está en esta lista o si el
@@ -142,6 +143,8 @@ i-mop-tools-measure/
 ├── src/imop_measure/
 │   ├── config/                 # lectura y validación de environments/*.toml
 │   ├── geometry/                # distancia euclídea entre posiciones, generación de pares
+│   ├── transport/                # BleTransport (BLE/NUS, portado — ver arquitectura.md D1)
+│   ├── core/                     # DwmCliClient + parsers del protocolo Qorvo (portado)
 │   ├── ranging/                 # orquestación de sesiones BLE/UWB por par de nodos
 │   ├── report/                  # construcción y escritura de reportes JSON/MD
 │   └── app/                     # CLI (Typer) — capa de presentación
@@ -153,11 +156,13 @@ i-mop-tools-measure/
 Regla de dependencias entre capas, **una sola dirección**:
 
 ```
-app  →  ranging  →  { geometry, config, transporte BLE (dwm3001c_cli) }
+app  →  ranging  →  { geometry, config, core → transport }
 app  →  report
 ```
 
 - `geometry/` y `config/` no saben nada de BLE ni de Typer.
+- `core/` no sabe nada de Typer/Rich; `transport/` solo sabe hablar BLE
+  (`bleak`), no conoce el protocolo de comandos del Qorvo.
 - `ranging/` no sabe nada de Typer/Rich (para poder reusarse desde una
   futura GUI).
 - `report/` no sabe cómo se obtuvieron los datos, solo los recibe y los

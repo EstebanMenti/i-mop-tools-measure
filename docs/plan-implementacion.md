@@ -32,7 +32,8 @@
 | F0 | Andamiaje: `pyproject.toml`, estructura `src/`, `.gitignore`, pre-commit | `feature/f0-andamiaje` | — | ✅ (este PR) |
 | F1 | `config/` + `geometry/`: leer TOML, calcular distancias y pares | `feature/f1-config-geometria` | F0 | ✅ |
 | F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ✅ |
-| F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2 | ⬜ |
+| F2b | Porta `transport/` + `core/` (BleTransport, DwmCliClient, parsers) desde `dwm3001c_cli` para dejar de depender de él en runtime | `refactor/vendoriza-transporte-ble` | F2 | ✅ |
+| F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ⬜ |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ⬜ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ⬜ |
 | F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ⬜ |
@@ -153,6 +154,54 @@ se implementó — nada lo consume todavía (se evalúa en F3 si hace falta).
 `pyproject.toml` (`[[tool.mypy.overrides]]`, `ignore_missing_imports` para
 `dwm3001c_cli.*`) en vez de silenciar el import línea por línea.
 
+**Revisión posterior (tras cerrar F2):** el enfoque de "depender de
+`dwm3001c_cli` instalado en modo editable" se descartó — ataba este
+proyecto a tener el repo hermano clonado al lado en la ruta correcta, y no
+lo dejaba funcionar como herramienta independiente. En su lugar se
+**portó** el código necesario (transporte BLE + cliente de comandos Qorvo)
+a `src/imop_measure/{transport,core}/`, con su procedencia documentada
+(commit `ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd` de `i-mop-qorvo-CLI-script`)
+— ver [arquitectura.md](arquitectura.md) decisión D1 (revisada) y sección
+2.3.1. `ranging/session.py` ya no importa `dwm3001c_cli`: `SessionParams`
+está definida localmente ahí (mismo contenido, portado). El override de
+mypy para `dwm3001c_cli.*` se retiró de `pyproject.toml` — ya no aplica.
+`pip install -e ../i-mop-qorvo-CLI-script` ya no es un paso de instalación
+de este proyecto.
+
+## 4b. F2b — Portar transporte BLE y cliente Qorvo (independencia del repo hermano)
+
+Deliverables (todos portados de `dwm3001c_cli`, commit
+`ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd`, ver
+[arquitectura.md](arquitectura.md) §2.3.1):
+
+- `errors.py`: agrega `TransportError`, `CommandTimeoutError`,
+  `CommandRejectedError`, `UnexpectedModeError`, `DeviceDiscoveryError`
+  como subclases de `MeasureError` (reemplazan a `Dwm3001cError` como raíz).
+- `transport/base.py`: protocolo `Transport` + `LineAssembler`.
+- `transport/ble_link.py`: `BleTransport` (BLE/NUS sobre `bleak`).
+- `core/models.py`: `DeviceInfo`, `CalKey`, `Measurement`, `ChipId`,
+  `RangingStats`.
+- `core/parsers.py`: `is_ok`, `parse_stat`, `parse_calkey_line`,
+  `parse_listcal`, `parse_session_info`, `parse_decaid`.
+- `core/client.py`: `DwmCliClient` — **sin** `restore()` ni
+  `enable_uart_output()` (comandos destructivos que `CLAUDE.md` prohíbe
+  automatizar; al no existir el método, no se pueden invocar por error).
+- `ranging/session.py`: `SessionParams` pasa a estar definida localmente
+  (mismo contenido que la versión de `dwm3001c_cli.calibration.sampler`,
+  ya no importada).
+- `pyproject.toml`: agrega `bleak>=3.0` a las dependencias base, retira el
+  override de mypy para `dwm3001c_cli.*`.
+- `tests/fakes.py`: `FakeTransport` + `FakeBleakClient`, portados.
+- Tests portados: `tests/test_core_parsers.py`, `tests/test_core_client.py`,
+  `tests/test_transport_ble_link.py` (incluye los casos de los bugs reales
+  ya resueltos en el repo hermano: buffer colgado sin cierre, fragmentación
+  arbitraria de notificaciones BLE, filtrado del prompt de shell,
+  reconexión automática tras inactividad).
+
+Criterio de aceptación: `pip install -e .[dev]` sin ningún paso adicional
+(ya no hace falta instalar `dwm3001c_cli`); `ruff check`, `ruff format
+--check`, `mypy src` y `pytest -m "not hardware"` en verde.
+
 ## 5. F3 — Medición de un par (`pair_runner.py`)
 
 ```python
@@ -160,7 +209,7 @@ def run_pair(
     anchor_a: Anchor,
     anchor_b: Anchor,
     *,
-    session: SessionConfig,
+    session: SessionParams,
     n_samples: int,
     ble_timeouts: dict[str, float],
 ) -> MeasuredPair:
@@ -170,8 +219,11 @@ def run_pair(
 
 Secuencia exacta (ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md) §3-4):
 
-1. Conectar BLE a `anchor_a` y `anchor_b` (dos `BleTransport` + dos
-   `DwmCliClient`, timeouts desde `ble_timeouts`).
+1. Conectar BLE a `anchor_a` y `anchor_b` (dos
+   `transport.ble_link.BleTransport` + dos `core.client.DwmCliClient`,
+   ambos ya portados y disponibles desde F2b — ver
+   [arquitectura.md](arquitectura.md) §2.3.1 —, timeouts desde
+   `ble_timeouts`).
 2. `qorvo on` en ambos, esperar settle.
 3. `qorvo STOP` + `qorvo STAT` en ambos, confirmar modo `NONE`.
 4. `RESPF` en `anchor_a`, después `INITF` en `anchor_b` (parámetros
