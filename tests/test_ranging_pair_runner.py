@@ -88,7 +88,11 @@ def _make_factory(
             return fake
 
         return BleTransport(
-            address, power_on_settle_s=0.0, power_drain_s=0.01, _client_factory=client_factory
+            address,
+            power_on_settle_s=0.0,
+            power_drain_s=0.01,
+            connect_retry_attempts=1,
+            _client_factory=client_factory,
         )
 
     return factory

@@ -20,6 +20,9 @@ ADDRESS = "FD:7A:90:57:CC:9F"
 
 def make_transport(
     fake_client: FakeBleakClient | None = None,
+    *,
+    connect_retry_attempts: int = 1,
+    connect_retry_backoff_s: float = 0.0,
 ) -> tuple[BleTransport, FakeBleakClient]:
     client = fake_client or FakeBleakClient(ADDRESS)
 
@@ -30,7 +33,12 @@ def make_transport(
         return client
 
     transport = BleTransport(
-        ADDRESS, power_on_settle_s=0.0, power_drain_s=0.05, _client_factory=factory
+        ADDRESS,
+        power_on_settle_s=0.0,
+        power_drain_s=0.05,
+        connect_retry_attempts=connect_retry_attempts,
+        connect_retry_backoff_s=connect_retry_backoff_s,
+        _client_factory=factory,
     )
     return transport, client
 
@@ -160,3 +168,47 @@ class TestPower:
             transport.power_off()
 
         assert b"qorvo off\n" in client.sent
+
+
+class TestConnectRetry:
+    """Mitiga fallas transitorias conocidas del backend BLE de Windows
+    (BleakError u OSError nativo — ver `_CONNECT_RETRY_ATTEMPTS` en
+    ble_link.py) reintentando la conexion. Investigado y agregado a pedido
+    del usuario tras encontrarlo contra hardware real (2026-09-07)."""
+
+    def test_retries_transient_bleak_error_and_succeeds(self) -> None:
+        fake = FakeBleakClient(ADDRESS, fail_connect_times=2)
+        transport, _ = make_transport(fake, connect_retry_attempts=3, connect_retry_backoff_s=0.0)
+
+        with transport:
+            assert fake.is_connected
+
+        assert fake.connect_attempts == 3
+
+    def test_retries_raw_oserror_from_winrt_backend(self) -> None:
+        # Caso real observado contra hardware: el backend WinRT de bleak
+        # a veces filtra un OSError crudo en vez de BleakError (ej.
+        # "[WinError -2147483629] Se cerro el objeto").
+        fake = FakeBleakClient(ADDRESS, fail_connect_times=1, fail_connect_exception=OSError)
+        transport, _ = make_transport(fake, connect_retry_attempts=2, connect_retry_backoff_s=0.0)
+
+        with transport:
+            assert fake.is_connected
+
+        assert fake.connect_attempts == 2
+
+    def test_gives_up_after_max_attempts_and_wraps_as_transport_error(self) -> None:
+        fake = FakeBleakClient(ADDRESS, fail_connect=True)
+        transport, _ = make_transport(fake, connect_retry_attempts=2, connect_retry_backoff_s=0.0)
+
+        with pytest.raises(TransportError):
+            transport.open()
+
+        assert fake.connect_attempts == 2
+
+    def test_gives_up_wraps_raw_oserror_as_transport_error(self) -> None:
+        fake = FakeBleakClient(ADDRESS, fail_connect=True, fail_connect_exception=OSError)
+        transport, _ = make_transport(fake, connect_retry_attempts=2, connect_retry_backoff_s=0.0)
+
+        with pytest.raises(TransportError, match="error BLE"):
+            transport.open()
