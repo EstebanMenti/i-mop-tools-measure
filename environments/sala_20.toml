@@ -1,0 +1,122 @@
+# =============================================================================
+# environments/sala_20.toml — Ambiente "Sala 20"
+# =============================================================================
+# ÚNICA fuente de verdad para las anclas UWB de este ambiente.
+# Reemplaza la sección [anchors] del layout monolítico previo (MAC corta)
+# y los [nodos] de la vieja sala_20.toml, unificando el formato a MAC BLE.
+#
+# Cada ancla define: nombre, MAC BLE, posición [x,y,z] y tiempo de prendido.
+# =============================================================================
+
+[sala]
+# Identificador de sala (debe coincidir con el nombre del archivo)
+id = "20"
+# Nombre descriptivo (opcional, para documentación)
+nombre = "Sala 20 - Configuración Real"
+
+# Dimensiones del espacio (para plotting/trilateración)
+[dimensions]
+x = 6.0   # metros
+y = 8.0
+z = 3.0
+
+# ---------------------------------------------------------------------------
+# Anclas UWB
+# ---------------------------------------------------------------------------
+# Dos direcciones por nodo (espacios distintos, no derivables):
+#   mac      -> MAC BLE completa (AA:BB:CC:DD:EE:FF), para encendido/apagado BLE.
+#   uwb_addr -> dirección corta UWB de 2 bytes (XX:YY), para la sesión de
+#               ranging y el matcheo de notificaciones RangingData.
+# config.anchors se keyea por uwb_addr. Ajusta AMBOS campos a los reales.
+# Formato de tiempo: número + sufijo (s = segundos, m = minutos)
+# ---------------------------------------------------------------------------
+
+#[[anchors]]
+#key             = "uwb_node_1"
+#nombre          = "UWB-Node-1"
+#mac             = "00:00:00:00:00:01"   # TODO: MAC BLE real del nodo 1
+#uwb_addr        = "00:01"               # TODO: short address UWB real del nodo 1
+#posicion        = [0.0, 0.0, 0.85]   # [x, y, z] metros
+#tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_2"
+nombre          = "UWB-Node-2"
+mac             = "00:00:00:00:00:02"   # TODO: MAC BLE real del nodo 2
+uwb_addr        = "00:02"               # TODO: short address UWB real del nodo 2
+posicion        = [0.03, 0.03, 0.26]
+tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_3"
+nombre          = "UWB-Node-3"
+mac             = "00:00:00:00:00:03"   # TODO: MAC BLE real del nodo 3
+uwb_addr        = "00:03"               # TODO: short address UWB real del nodo 3
+posicion        = [0.03, 2.6, 0.82]
+tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_4"
+nombre          = "UWB-Node-4"
+mac             = "00:00:00:00:00:04"   # TODO: MAC BLE real del nodo 4
+uwb_addr        = "00:04"               # TODO: short address UWB real del nodo 4
+posicion        = [3.3, 2.6, 0.20]
+tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_5"
+nombre          = "UWB-Node-5"
+mac             = "00:00:00:00:00:05"   # TODO: MAC BLE real del nodo 5
+uwb_addr        = "00:05"               # TODO: short address UWB real del nodo 5
+posicion        = [3.28, 0.03, 0.90]
+tiempo_prendido = "120s"
+
+# [[anchors]]
+# key             = "uwb_node_6"
+# nombre          = "UWB-Node-6"
+# mac             = "00:00:00:00:00:06"   # TODO: MAC BLE real del nodo 6
+# uwb_addr        = "00:06"               # TODO: short address UWB real del nodo 6
+# posicion        = [6.0, 8.0, 0.85]
+# tiempo_prendido = "120s"
+
+# [[anchors]]
+# key             = "uwb_node_7"
+# nombre          = "UWB-Node-7"
+# mac             = "00:00:00:00:00:07"   # TODO: MAC BLE real del nodo 6
+# uwb_addr        = "00:07"               # TODO: short address UWB real del nodo 6
+# posicion        = [6.0, 0.0, 0.85]
+# tiempo_prendido = "120s"
+
+# [[anchors]]
+# key             = "uwb_node_9"
+# nombre          = "UWB-Node-9"
+# mac             = "00:00:00:00:00:09"   # TODO: MAC BLE real del nodo 6
+# uwb_addr        = "00:09"               # TODO: short address UWB real del nodo 6
+# posicion        = [0.0, 8.0, 0.85]
+# tiempo_prendido = "120s"
+
+# ---------------------------------------------------------------------------
+# Timeouts BLE para esta sala (opcional - se usan defaults si se omite)
+# ---------------------------------------------------------------------------
+[ble_timeouts]
+# Segundos TOTALES para conectar a cada nodo, incluyendo reintentos (Bleak/BlueZ)
+connection_timeout = 180.0
+# Segundos de espera de ACK al mandar "uwb on"/"uwb off"
+command_timeout = 5.0
+# Espera fija tras conectar, antes de chequear el MTU negociado
+mtu_negotiation_wait = 5.0
+# Segundos entre reintentos de negociación de MTU
+mtu_retry_wait = 2.0
+# Cantidad de intentos de negociación de MTU
+mtu_retry_attempts = 3
+# Margen fijo para esperar que el apagado + desconexión de TODOS los nodos termine
+session_end_timeout = 15.0
+# Segundos para reconectar a cada nodo al apagar
+power_off_connection_timeout = 20.0
+# Cuántos nodos conectar/prender/apagar EN SIMULTÁNEO (límite duro Pi ~7)
+max_concurrent_connections = 5
+# Patrulla round-robin de monitoreo (batería + qorvo STAT) por nodo, en segundos.
+# 0 desactiva el monitoreo.
+monitor_interval = 60.0
+# Timeout de respuesta completa de los comandos `qorvo <cmd>` (>= límite duro de 8s del puente)
+qorvo_command_timeout = 10.0
