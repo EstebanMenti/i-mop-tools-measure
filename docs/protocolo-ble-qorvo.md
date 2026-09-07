@@ -37,9 +37,10 @@ Pasos de conexión obligatorios:
    debe poder reconectar automáticamente si va a haber pausas largas entre
    comandos.
 
-> **Nota:** este proyecto no reimplementa esta capa — la resuelve
-> `dwm3001c_cli.transport.ble_link.BleTransport` (repo `i-mop-qorvo-CLI-script`,
-> ver [arquitectura.md](arquitectura.md) decisión D1).
+> **Nota:** esta capa la resuelve `imop_measure.transport.ble_link.BleTransport`
+> — una copia adaptada del mismo módulo de `i-mop-qorvo-CLI-script` (no una
+> reimplementación desde cero), ver [arquitectura.md](arquitectura.md)
+> decisión D1.
 
 ## 2. El comando `qorvo`
 

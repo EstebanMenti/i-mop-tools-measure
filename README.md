@@ -37,11 +37,15 @@ ver Fase F7 en [docs/plan-implementacion.md](docs/plan-implementacion.md).
 
 ## 3. Instalación
 
+Herramienta independiente: no requiere tener clonado ningún otro repo al
+lado (el transporte BLE y el cliente del protocolo Qorvo están portados
+dentro de este proyecto — ver [docs/arquitectura.md](docs/arquitectura.md)
+decisión D1).
+
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e .[dev]
-pip install -e ..\i-mop-qorvo-CLI-script   # transporte BLE + cliente Qorvo (ver docs/arquitectura.md, decisión D1)
 ```
 
 ## 4. Formato del archivo de ambiente
