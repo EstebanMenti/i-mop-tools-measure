@@ -7,23 +7,37 @@ from imop_measure.report.models import PairResult
 from imop_measure.report.write import write_reports
 
 PASS_RESULT = PairResult(
-    initiator="uwb_node_10",
-    responder="uwb_node_11",
+    initiator="UWB-Node-10",
+    responder="UWB-Node-11",
     distance_calc_m=5.0,
     distance_measured_m=5.0,
-    error_abs_cm=0.0,
-    error_pct=0.0,
+    diff_m=0.0,
+    diff_pct=0.0,
+    necesita_revision=False,
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
 )
+REVISAR_RESULT = PairResult(
+    initiator="UWB-Node-11",
+    responder="UWB-Node-12",
+    distance_calc_m=5.0,
+    distance_measured_m=5.4,
+    diff_m=0.4,
+    diff_pct=8.0,
+    necesita_revision=True,  # 40cm > umbral de revision (30cm default)
+    n_samples_success=10,
+    n_samples_requested=10,
+    estado="FAIL",
+)
 ERROR_RESULT = PairResult(
-    initiator="uwb_node_11",
-    responder="uwb_node_10",
+    initiator="UWB-Node-11",
+    responder="UWB-Node-10",
     distance_calc_m=5.0,
     distance_measured_m=None,
-    error_abs_cm=None,
-    error_pct=None,
+    diff_m=None,
+    diff_pct=None,
+    necesita_revision=False,
     n_samples_success=0,
     n_samples_requested=10,
     estado="ERROR",
@@ -43,35 +57,89 @@ def test_write_reports_creates_both_files_with_expected_names(tmp_path: Path) ->
 
 
 def test_write_reports_json_content(tmp_path: Path) -> None:
-    json_path, _ = write_reports([PASS_RESULT, ERROR_RESULT], sala_id="20", report_dir=tmp_path)
+    json_path, _ = write_reports(
+        [PASS_RESULT, ERROR_RESULT],
+        sala_id="20",
+        sala_nombre="Sala 20 - Configuración Real",
+        samples=10,
+        tolerance_cm=5.0,
+        review_threshold_cm=30.0,
+        report_dir=tmp_path,
+    )
 
     payload = json.loads(json_path.read_text(encoding="utf-8"))
 
     assert payload["ambiente"] == "20"
-    assert payload["resumen"] == {"pass": 1, "fail": 0, "error": 1, "total": 2}
+    assert payload["ambiente_nombre"] == "Sala 20 - Configuración Real"
+    assert payload["parametros"] == {
+        "muestras_por_direccion": 10,
+        "tolerancia_cm": 5.0,
+        "umbral_revision_cm": 30.0,
+    }
+    assert payload["resumen"] == {"pass": 1, "fail": 0, "error": 1, "revisar": 0, "total": 2}
     assert len(payload["resultados"]) == 2
-    assert payload["resultados"][0]["initiator"] == "uwb_node_10"
+    assert payload["resultados"][0]["initiator"] == "UWB-Node-10"
     assert payload["resultados"][1]["detalle"] == "sin mediciones SUCCESS recibidas"
 
 
-def test_write_reports_markdown_pass_only_has_no_failure_section(tmp_path: Path) -> None:
+def test_write_reports_json_infers_samples_from_first_result_if_not_given(tmp_path: Path) -> None:
+    json_path, _ = write_reports([PASS_RESULT], sala_id="20", report_dir=tmp_path)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert payload["parametros"]["muestras_por_direccion"] == PASS_RESULT.n_samples_requested
+
+
+def test_write_reports_markdown_has_title_date_and_executive_summary(tmp_path: Path) -> None:
+    _, md_path = write_reports(
+        [PASS_RESULT], sala_id="20", sala_nombre="Sala 20 - Configuración Real", report_dir=tmp_path
+    )
+
+    content = md_path.read_text(encoding="utf-8")
+
+    assert content.startswith("# Reporte de Medición de Distancia UWB")
+    assert "Sala 20 - Configuración Real" in content
+    assert "**Fecha y hora de generación:**" in content
+    assert "## Resumen ejecutivo" in content
+    assert "## Detalle de mediciones" in content
+
+
+def test_write_reports_markdown_shows_calc_measured_and_both_diffs(tmp_path: Path) -> None:
     _, md_path = write_reports([PASS_RESULT], sala_id="20", report_dir=tmp_path)
 
     content = md_path.read_text(encoding="utf-8")
 
-    assert "**1 PASS · 0 FAIL · 0 ERROR** (total 1)" in content
-    assert "uwb_node_10 → uwb_node_11" in content
-    assert "## Mediciones con error o fuera de tolerancia" not in content
+    assert "UWB-Node-10 → UWB-Node-11" in content
+    assert "5.000" in content  # calculada y medida
+    assert "+0.000" in content  # diferencia en metros, con signo
+    assert "+0.0%" in content  # diferencia en %, con signo
 
 
-def test_write_reports_markdown_includes_failure_section_when_present(tmp_path: Path) -> None:
+def test_write_reports_markdown_pass_only_has_no_revision_section(tmp_path: Path) -> None:
+    _, md_path = write_reports([PASS_RESULT], sala_id="20", report_dir=tmp_path)
+
+    content = md_path.read_text(encoding="utf-8")
+
+    assert "## Mediciones que requieren revisión" not in content
+
+
+def test_write_reports_markdown_includes_revision_section_for_errors(tmp_path: Path) -> None:
     _, md_path = write_reports([PASS_RESULT, ERROR_RESULT], sala_id="20", report_dir=tmp_path)
 
     content = md_path.read_text(encoding="utf-8")
 
-    assert "**1 PASS · 0 FAIL · 1 ERROR** (total 2)" in content
-    assert "## Mediciones con error o fuera de tolerancia" in content
+    assert "## Mediciones que requieren revisión" in content
     assert "sin mediciones SUCCESS recibidas" in content
+
+
+def test_write_reports_markdown_flags_necesita_revision(tmp_path: Path) -> None:
+    _, md_path = write_reports([REVISAR_RESULT], sala_id="20", report_dir=tmp_path)
+
+    content = md_path.read_text(encoding="utf-8")
+
+    assert "Sí" in content  # columna "Revisar" marcada
+    assert "## Mediciones que requieren revisión" in content
+    assert "diferencia mayor al umbral de revisión" in content
 
 
 def test_write_reports_creates_report_dir_if_missing(tmp_path: Path) -> None:

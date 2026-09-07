@@ -1,6 +1,6 @@
 """Modelo del resultado de una medicion, listo para reportar.
 
-Ver docs/plan-implementacion.md Fase F5.
+Ver docs/plan-implementacion.md Fase F5 y docs/formato-reporte.md.
 """
 
 from dataclasses import dataclass
@@ -20,18 +20,30 @@ class PairResult:
     distancia geometrica no tiene direccion). Ver
     docs/arquitectura.md decision D6.
 
+    `diff_m`/`diff_pct` llevan signo (`medida - calculada`): positivo si
+    se midio mas lejos de lo calculado, negativo si mas cerca. `diff_pct`
+    usa `distance_calc_m` como base, `None` si esa distancia es cero
+    (evita division por cero).
+
+    `necesita_revision` es un umbral distinto e independiente de `estado`
+    (que usa la tolerancia `--tolerance-cm`, mas estricta): marca
+    diferencias groseras (default 30 cm) que probablemente sean un error
+    de carga de datos (nodo equivocado, `posicion` mal tipeada) mas que
+    ruido normal de multipath — ver docs/formato-reporte.md seccion 5.
+
     `detalle` (agregado respecto al esquema original del plan) guarda el
-    mensaje de `MeasuredPair.error` cuando `estado != "PASS"`, para que el
-    reporte pueda mostrar por que fallo una medicion sin tener que
-    recorrer los `MeasuredPair` originales por separado.
+    mensaje de `MeasuredPair.error` cuando la medicion fallo del todo
+    (`estado="ERROR"`), para que el reporte pueda mostrar por que sin
+    tener que recorrer los `MeasuredPair` originales por separado.
     """
 
     initiator: str
     responder: str
     distance_calc_m: float
     distance_measured_m: float | None
-    error_abs_cm: float | None
-    error_pct: float | None
+    diff_m: float | None
+    diff_pct: float | None
+    necesita_revision: bool
     n_samples_success: int
     n_samples_requested: int
     estado: Estado
