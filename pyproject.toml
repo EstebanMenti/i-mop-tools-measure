@@ -44,6 +44,12 @@ strict = true
 mypy_path = "src"
 packages = ["imop_measure"]
 
+[[tool.mypy.overrides]]
+# dwm3001c_cli (repo hermano ../i-mop-qorvo-CLI-script) no publica py.typed.
+# Ver docs/arquitectura.md decision D1.
+module = "dwm3001c_cli.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not hardware'"
