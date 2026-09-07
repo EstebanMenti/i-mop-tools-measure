@@ -11,7 +11,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  app/            CLI (Typer + Rich). Futuro: gui/ (Fase F7)  │
+│  app/            CLI (Typer + Rich). gui/ (Qt, Fase F7) al lado │
 ├─────────────────────────────────────────────────────────────┤
 │  ranging/        Orquesta sesiones INITF/RESPF por par de    │
 │                   nodos, lee notificaciones, promedia         │
@@ -101,6 +101,17 @@ no se pueden invocar por error).
 | `cli.py` | App Typer (`imop-measure`). Subcomando principal: `run --environment environments/sala_20.toml`. |
 | `config_cli.py` | Resolución de opciones CLI (timeouts, cantidad de muestras, tolerancia) con precedencia CLI > TOML (`[ble_timeouts]`) > default, igual que `app/config.py` del repo hermano. |
 
+### 2.6 `gui/` (Fase F7)
+
+| Módulo | Responsabilidad |
+|---|---|
+| `app.py` | Entry point `main_gui()` (comando `imop-measure-gui`). |
+| `models.py` | `CampaignResultsModel(QAbstractTableModel)`: tabla de resultados en vivo. |
+| `worker.py` | `CampaignWorker(QObject)` + `start_worker()`: corre `ranging.campaign.run_campaign` en un `QThread` (ver decisión D7), nunca deja escapar una excepción sin emitir `failed`. |
+| `main_window.py` | `MainWindow(QMainWindow)`: formulario + tabla en vivo + resumen. |
+
+Ver [plan-implementacion.md](plan-implementacion.md) Fase F7 para el detalle completo.
+
 ## 3. Decisiones de diseño
 
 | Decisión | Justificación |
@@ -111,6 +122,7 @@ no se pueden invocar por error).
 | **D4** — El archivo de ambiente vive en `environments/`, no en la raíz del repo. | Coincide con el propio encabezado de `sala_20.toml` (`# environments/sala_20.toml`) y dejar la raíz del repo limpia para múltiples ambientes futuros. |
 | **D5** — `reports/` y `logs/` se generan en tiempo de ejecución y están gitignored. | Mismo patrón que el repo hermano: son salidas, no fuente de verdad versionada. |
 | **D6** — Cada nodo mide contra todos los demás en **ambas direcciones** (`N·(N-1)` mediciones, permutaciones) en vez de un solo valor por par sin orden (`N·(N-1)/2`, combinaciones); las dos direcciones de un mismo par físico se reportan por separado, sin promediar. | Pedido explícito del usuario tras cerrar la Fase F3: la distancia geométrica es simétrica, pero la distancia UWB medida puede no serlo (asimetrías de hardware/protocolo entre el rol iniciador y respondedor) — promediar A→B y B→A escondería esa asimetría si existiera. Motivó además que `pair_runner.run_pair` pasara de `anchor_a`/`anchor_b` posicionales (con una convención implícita de roles) a `initiator`/`responder` keyword-only explícitos. Ver `docs/plan-implementacion.md` Fase F4. |
+| **D7** — `gui/` corre `run_campaign` en un `QObject` movido a un `QThread` (`moveToThread`), no una subclase de `QThread` ni `QThreadPool`; el `run()` del worker atrapa `Exception` genérica, nunca solo `MeasureError`. | Mismo patrón que `dwm3001c_cli.gui.workers` — necesita señales de progreso continuas (`on_pair_done` por cada dirección medida), no un único resultado al final, lo que descarta `QThreadPool`. El repo hermano documenta un bug real: un worker que deja escapar una excepción no contemplada (ej. un `OSError` de bleak/WinRT) termina en silencio, sin emitir `finished` ni `failed`, y el botón de "Ejecutar" queda trabado para siempre sin ningún mensaje — atrapar `Exception` a secas evita repetir ese bug. |
 
 ## 4. Flujo de datos: campaña de medición completa
 
