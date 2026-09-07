@@ -1,0 +1,24 @@
+# Entornos virtuales
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Herramientas
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Salida en tiempo de ejecucion (ver docs/arquitectura.md, decision D5)
+reports/*
+!reports/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db

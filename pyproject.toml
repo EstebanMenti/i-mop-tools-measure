@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "i-mop-tools-measure"
+version = "0.1.0"
+description = "Mide distancia real entre nodos UWB y la compara contra la distancia geometrica calculada."
+requires-python = ">=3.11"
+authors = [{ name = "Esteban Menti", email = "esteban.menti@gmail.com" }]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+gui = [
+    "PySide6>=6.7",
+    "pyqtgraph>=0.13",
+]
+
+[project.scripts]
+imop-measure = "imop_measure.app.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+packages = ["imop_measure"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not hardware'"
+markers = [
+    "hardware: tests que requieren nodos UWB reales conectados por BLE (excluidos por defecto)",
+]
