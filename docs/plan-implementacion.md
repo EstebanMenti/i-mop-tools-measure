@@ -30,7 +30,7 @@
 | Fase | Contenido | Rama | Depende de | Estado |
 |---|---|---|---|---|
 | F0 | Andamiaje: `pyproject.toml`, estructura `src/`, `.gitignore`, pre-commit | `feature/f0-andamiaje` | — | ✅ (este PR) |
-| F1 | `config/` + `geometry/`: leer TOML, calcular distancias y pares | `feature/f1-config-geometria` | F0 | ⬜ |
+| F1 | `config/` + `geometry/`: leer TOML, calcular distancias y pares | `feature/f1-config-geometria` | F0 | ✅ |
 | F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ⬜ |
 | F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2 | ⬜ |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ⬜ |
@@ -112,7 +112,7 @@ Tests (`tests/test_config.py`, `tests/test_geometry.py`): usar
 `ConfigError`.
 
 Criterio de aceptación: `load_ambiente(Path("environments/sala_20.toml"))`
-devuelve 5 anclas activas y `all_pairs(...)` devuelve 10 pares; distancia
+devuelve 4 anclas activas y `all_pairs(...)` devuelve 6 pares; distancia
 calculada entre `uwb_node_2` y `uwb_node_3` verificable a mano
 (`√((0.03-0.03)² + (2.6-0.03)² + (0.82-0.26)²) ≈ 2.629 m`).
 
