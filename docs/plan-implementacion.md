@@ -36,7 +36,7 @@
 | F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ✅ (verificado contra hardware real 2026-09-07) |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ✅ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ✅ |
-| F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ⬜ |
+| F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ✅ (verificado contra hardware real 2026-09-07) |
 | F7 | Herramienta visual (GUI) — reusa `ranging/`, `report/`, `config/`, `geometry/` sin cambios | `feature/f7-gui` | F6 (validado en hardware real) | ⬜ |
 
 ## 2. F0 — Andamiaje
@@ -397,6 +397,24 @@ exit code 1 con mensaje legible, sin traceback crudo salvo `--verbose`).
 Criterio de aceptación: correr `imop-measure run --environment
 environments/sala_20.toml` contra hardware real produce un reporte
 completo en `reports/`.
+
+**Verificado contra hardware real (2026-09-07):** el comando corrió de
+punta a punta contra los 2 nodos reales — 30/30 muestras SUCCESS en
+ambas direcciones (`UWB-Node-10↔UWB-Node-11`, ~3.48 m medidos, consistente
+entre direcciones) y generó `reports/medicion-20-<timestamp>.{json,md}`
+completos. El reporte marcó ambas mediciones `FAIL` — **correcto**, no es
+un bug: `posicion` en `sala_20.toml` sigue siendo un valor `TODO` (no la
+ubicación física real de los nodos), así que la distancia calculada
+(0.59 m) no tiene por qué coincidir con la medida.
+
+De paso se encontró un bug real: `console.print`/`rich` con caracteres no
+ASCII (`→`, usado en el progreso por consola) hace `UnicodeEncodeError` y
+crashea en la consola legacy de Windows — no degrada con un reemplazo.
+Se corrigió reemplazando esos caracteres por equivalentes ASCII (`->`)
+en todo lo que se imprime a terminal; ver `CLAUDE.md` §2. Los reportes en
+disco (`report/write.py`) no estaban afectados (usan `encoding="utf-8"`
+explícito) y mantienen `→`/acentos sin problema. **La Fase F6 queda
+cerrada.**
 
 ## 9. F7 — Herramienta visual (roadmap, no implementar todavía)
 

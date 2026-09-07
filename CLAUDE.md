@@ -101,6 +101,16 @@ exhaustivo de cada comando de firmware, consultar
   `Dwm3001cError` del repo hermano).
 - Nada de efectos secundarios peligrosos detrás de nombres inocuos (una
   función `connect()` no debería, de paso, lanzar `RESTORE`).
+- **[Verificado 2026-09-07 contra hardware real]** No usar caracteres no
+  ASCII (`→`, `—`, etc.) en texto que se imprime a la terminal (`app/`,
+  vía `console.print`/`rich`) — la consola legacy de Windows (codepage
+  `cp1252` u otro, según la máquina) puede no poder codificarlos y
+  `rich` **crashea** en vez de degradar con un reemplazo (confirmado:
+  `UnicodeEncodeError` al imprimir `→` corriendo `imop-measure run` real).
+  Usar equivalentes ASCII (`->`, `-`). Los archivos que se escriben a
+  disco (`report/write.py`) no tienen este problema: se abren con
+  `encoding="utf-8"` explícito, así que ahí sí se puede usar `→`/acentos
+  sin restricción.
 
 ## 3. Testing
 
