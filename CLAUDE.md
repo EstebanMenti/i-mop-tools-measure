@@ -197,6 +197,10 @@ para que los tres repos hermanos se manejen igual.
 - Para trabajo de fase (ver `docs/plan-implementacion.md`), la convención es
   `feature/f<N>-<nombre-fase>` — una rama por fase, PR contra `main` al
   cerrarla.
+- Las ramas de corta duración (`feature/`, `fix/`, `docs/`, `chore/`,
+  `refactor/`) se **borran** (local y remoto) una vez mergeado su PR — por
+  eso son "de corta duración". La excepción es `hardware/` (ver abajo),
+  que nunca se mergea y por lo tanto nunca se borra por este motivo.
 - Si en algún momento se necesita una rama de banco de pruebas de hardware
   de larga duración (que no se mergea nunca a `main`), usar el patrón ya
   establecido en los repos hermanos: `hardware/<descripcion-corta>`,
