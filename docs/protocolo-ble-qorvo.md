@@ -167,3 +167,47 @@ SESSION_INFO_NTF: {session_handle=1, sequence_number=0, block_index=0, n_measure
 ## 6. Direcciones y mapeo `uwb_addr` → `ADDR`/`PADDR`
 
 Ver [formato-ambiente-toml.md](formato-ambiente-toml.md) §2.
+
+## 7. Fallas conocidas del backend BLE de Windows
+
+> Investigado a pedido del usuario tras encontrar esto contra hardware
+> real (2026-09-07) — ver también `CLAUDE.md` sección 2 (por qué la
+> salida a terminal no puede usar los mismos caracteres que los reportes).
+
+El backend WinRT de `bleak` (la librería BLE que usa este proyecto, ver
+[arquitectura.md](arquitectura.md) decisión D1) tiene fallas de conexión
+**transitorias y conocidas en Windows, sin arreglo de fondo en `bleak`
+todavía** — hay varios issues abiertos en su repositorio sobre esto
+exacto (ej. [`hbldh/bleak#1280`](https://github.com/hbldh/bleak/issues/1280),
+[`hbldh/bleak#1829`](https://github.com/hbldh/bleak/issues/1829)).
+Confirmado dos veces contra hardware real en este proyecto:
+
+- `OSError: [WinError -2147483629] Se cerró el objeto` — un error nativo
+  de Windows (COM/WinRT), no una `BleakError` de `bleak`.
+- `TransportError: ... conexión BLE perdida esperando respuesta` — la
+  conexión se cae mientras se espera una respuesta.
+
+Ambos son más probables cuanto más seguido se conecta/desconecta el mismo
+adaptador Bluetooth en poco tiempo (exactamente lo que hace este proyecto
+al medir varios nodos).
+
+**Mitigación implementada:** `imop_measure.transport.ble_link.BleTransport`
+reintenta la conexión (`_connect_with_retry`, con un cliente `bleak`
+**nuevo** en cada intento, no el mismo objeto que ya falló — hay reportes
+de la comunidad de que reusar el mismo objeto tras esta falla lo puede
+dejar en un estado inválido) — 3 intentos con 2s de espera entre cada uno
+por defecto, configurable via `BleTransport(connect_retry_attempts=,
+connect_retry_backoff_s=)`. `_run_coro` envuelve tanto `BleakError` como
+`OSError` crudo en nuestro propio `TransportError`, para que
+`core.client.DwmCliClient`/`ranging.pair_runner` no tengan que distinguir
+el tipo de excepción nativa.
+
+**Alternativa evaluada y descartada por ahora:**
+[`bleak-retry-connector`](https://github.com/Bluetooth-Devices/bleak-retry-connector)
+(usada por Home Assistant) es más robusta — pero su función principal,
+`establish_connection()`, exige un objeto `BLEDevice` en vez de una
+dirección MAC como string, lo que hubiera requerido escanear antes de
+cada conexión y reestructurar cómo se inyectan los dobles de prueba en
+los tests. Se optó por el reintento propio (más simple, cero
+dependencias nuevas) como primera mitigación — si en el futuro esto no
+alcanza con más nodos, reconsiderar esa librería.

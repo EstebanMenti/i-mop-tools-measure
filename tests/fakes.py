@@ -101,7 +101,15 @@ class FakeBleakClient:
             notificaciones separadas (para simular la fragmentacion
             arbitraria real de las notificaciones BLE).
         mtu_size: valor fijo a reportar en `mtu_size`.
-        fail_connect: si es `True`, `connect()` lanza `BleakError`.
+        fail_connect: si es `True`, `connect()` siempre lanza (simula una
+            falla persistente, no transitoria).
+        fail_connect_times: cuantas veces seguidas `connect()` falla antes
+            de tener exito (simula la falla transitoria real de bleak/
+            WinRT en Windows — ver docs/protocolo-ble-qorvo.md).
+        fail_connect_exception: tipo de excepcion a lanzar mientras falla;
+            default `BleakError`. Usar `OSError` para simular el caso real
+            observado contra hardware (`OSError: [WinError -2147483629]
+            Se cerro el objeto`, no una `BleakError`).
     """
 
     def __init__(
@@ -112,6 +120,8 @@ class FakeBleakClient:
         script: dict[str, list[bytes]] | None = None,
         mtu_size: int = 247,
         fail_connect: bool = False,
+        fail_connect_times: int = 0,
+        fail_connect_exception: type[Exception] | None = None,
     ) -> None:
         self.address = address
         self._disconnected_callback = disconnected_callback
@@ -120,6 +130,9 @@ class FakeBleakClient:
         self.script = dict(script or {})
         self.mtu_size = mtu_size
         self.fail_connect = fail_connect
+        self.fail_connect_times = fail_connect_times
+        self.fail_connect_exception = fail_connect_exception
+        self.connect_attempts = 0
         self.sent: list[bytes] = []
 
     @property
@@ -129,8 +142,10 @@ class FakeBleakClient:
     async def connect(self) -> None:
         from bleak.exc import BleakError
 
-        if self.fail_connect:
-            raise BleakError("fake: fallo de conexion simulado")
+        self.connect_attempts += 1
+        if self.fail_connect or self.connect_attempts <= self.fail_connect_times:
+            exc_type = self.fail_connect_exception or BleakError
+            raise exc_type(f"fake: fallo de conexion simulado (intento {self.connect_attempts})")
         self._connected = True
 
     async def disconnect(self) -> None:

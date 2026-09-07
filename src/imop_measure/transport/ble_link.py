@@ -69,6 +69,16 @@ _BRIDGE_TIMEOUT_MARKER = "Error: sin respuesta del modulo Qorvo"
 # forma confiable (verificado en el repo hermano).
 _POWER_ON_SETTLE_S = 3.0
 
+# El backend WinRT de bleak (bluetooth en Windows) tiene fallas de conexion
+# transitorias y conocidas, sin arreglo de fondo en bleak todavia (ver
+# docs/protocolo-ble-qorvo.md, seccion "Fallas conocidas del backend BLE
+# de Windows"): tanto BleakError como OSError nativos (ej. "[WinError
+# -2147483629] Se cerro el objeto"), confirmado contra hardware real
+# 2026-09-07. Reintentar la conexion (con un cliente nuevo cada vez, no el
+# mismo objeto que ya fallo) resuelve la mayoria de los casos observados.
+_CONNECT_RETRY_ATTEMPTS = 3
+_CONNECT_RETRY_BACKOFF_S = 2.0
+
 
 class _BleakClientLike(Protocol):
     """Subconjunto de la API de `BleakClient` que usa `BleTransport`.
@@ -118,6 +128,10 @@ class BleTransport:
             GATT.
         power_on_settle_s: espera tras encender el modulo Qorvo en
             `open()`.
+        connect_retry_attempts: intentos de `connect()` ante una falla
+            transitoria conocida del backend BLE de Windows (ver arriba)
+            antes de darse por vencido.
+        connect_retry_backoff_s: espera entre intentos de conexion.
     """
 
     NUS_SERVICE_UUID = NUS_SERVICE_UUID
@@ -132,6 +146,8 @@ class BleTransport:
         write_timeout_s: float = 5.0,
         power_on_settle_s: float = _POWER_ON_SETTLE_S,
         power_drain_s: float = 2.0,
+        connect_retry_attempts: int = _CONNECT_RETRY_ATTEMPTS,
+        connect_retry_backoff_s: float = _CONNECT_RETRY_BACKOFF_S,
         _client_factory: Callable[..., _BleakClientLike] | None = None,
     ) -> None:
         self._address = address
@@ -143,6 +159,8 @@ class BleTransport:
         self._write_timeout_s = write_timeout_s
         self._power_on_settle_s = power_on_settle_s
         self._power_drain_s = power_drain_s
+        self._connect_retry_attempts = connect_retry_attempts
+        self._connect_retry_backoff_s = connect_retry_backoff_s
         self._client_factory: Callable[..., _BleakClientLike] = _client_factory or cast(
             "Callable[..., _BleakClientLike]", BleakClient
         )
@@ -322,7 +340,13 @@ class BleTransport:
             future.result(timeout_s)
         except FutureTimeoutError as exc:
             raise TransportError(f"{self.name}: timeout esperando una operacion BLE") from exc
-        except BleakError as exc:
+        except (BleakError, OSError) as exc:
+            # El backend WinRT de bleak en Windows a veces filtra errores
+            # nativos como OSError crudo en vez de BleakError (ej.
+            # "[WinError -2147483629] Se cerro el objeto", confirmado
+            # contra hardware real) — se envuelven igual para que nada
+            # aguas arriba (core.client.DwmCliClient, ranging.pair_runner)
+            # tenga que distinguir el tipo de excepcion nativa.
             raise TransportError(f"{self.name}: error BLE: {exc}") from exc
 
     def _ensure_connected(self) -> None:
@@ -337,13 +361,41 @@ class BleTransport:
         self._run_coro(self._connect(), timeout_s=self._connect_timeout_s)
 
     async def _connect(self) -> None:
-        client = self._client_factory(self._address, disconnected_callback=self._on_disconnect)
-        await client.connect()
+        client = await self._connect_with_retry()
         await client.start_notify(NUS_TX_CHAR_UUID, self._on_notify)
         self._client = client
         self._connected = True
         self._mtu_size = client.mtu_size
         logger.debug("%s: conectado, MTU=%s", self.name, self._mtu_size)
+
+    async def _connect_with_retry(self) -> _BleakClientLike:
+        """Reintenta `connect()` ante una falla transitoria conocida del
+        backend BLE de Windows (ver `_CONNECT_RETRY_ATTEMPTS` arriba).
+
+        Arma un cliente **nuevo** en cada intento (no reintenta sobre el
+        mismo objeto que ya fallo) — reportes de la comunidad de `bleak`
+        indican que reusar el mismo `BleakClient` tras una falla de este
+        tipo puede dejar el objeto WinRT nativo en un estado invalido.
+        """
+        last_error: BleakError | OSError | None = None
+        for attempt in range(1, self._connect_retry_attempts + 1):
+            client = self._client_factory(self._address, disconnected_callback=self._on_disconnect)
+            try:
+                await client.connect()
+                return client
+            except (BleakError, OSError) as exc:
+                last_error = exc
+                logger.warning(
+                    "%s: fallo de conexion BLE (intento %d/%d): %s",
+                    self.name,
+                    attempt,
+                    self._connect_retry_attempts,
+                    exc,
+                )
+                if attempt < self._connect_retry_attempts:
+                    await asyncio.sleep(self._connect_retry_backoff_s)
+        assert last_error is not None  # el loop corrio al menos una vez
+        raise last_error
 
     async def _disconnect(self) -> None:
         if self._client is None:
