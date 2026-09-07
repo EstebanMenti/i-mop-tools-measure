@@ -66,8 +66,8 @@ espera para este proyecto (script → herramienta visual, ver plan F7).
 |---|---|
 | `addressing.py` | Convierte `uwb_addr` (`"00:02"`) a entero decimal para `-ADDR=`/`-PADDR=`. |
 | `session.py` | Arma los parámetros de sesión FiRa (`CHAN`, `PRFSET`, `PCODE`, `SLOT`, `BLOCK`, `ROUND`, `RRU`, `ID`, `VUPPER`) — `SessionParams` portada de `dwm3001c_cli.calibration.sampler` (ver decisión D1). |
-| `pair_runner.py` | Por cada par: conecta BLE a ambos nodos (vía `core.client.DwmCliClient` sobre `transport.ble_link.BleTransport`), enciende (`qorvo on`), configura un nodo como `RESPF` y el otro como `INITF`, lee N notificaciones `SESSION_INFO_NTF`, filtra `status="SUCCESS"`, promedia `distance[cm]`, detiene la sesión (`qorvo STOP`), apaga (`qorvo off`) y desconecta. |
-| `campaign.py` | Itera `pair_runner.run_pair()` sobre todos los pares del ambiente, recolectando resultados y tolerando el fallo de un par sin abortar la campaña completa. |
+| `pair_runner.py` | `run_pair(*, initiator, responder, ...)`: conecta BLE a ambos nodos (vía `core.client.DwmCliClient` sobre `transport.ble_link.BleTransport`), enciende (`qorvo on`), configura `responder`=`RESPF` e `initiator`=`INITF`, lee N notificaciones `SESSION_INFO_NTF`, filtra `status="SUCCESS"`, promedia `distance[cm]`, detiene la sesión (`qorvo STOP`), apaga (`qorvo off`) y desconecta. |
+| `campaign.py` | Itera `pair_runner.run_pair()` sobre **todas las combinaciones ordenadas** de anclas del ambiente — cada nodo pasa por turno como iniciador contra todos los demás como respondedores (`N·(N-1)` mediciones direccionales, ver decisión D6) — recolectando resultados y tolerando el fallo de una medición sin abortar la campaña completa. |
 
 ### 2.3.1 `core/` y `transport/` (portados, ver decisión D1)
 
@@ -90,7 +90,7 @@ no se pueden invocar por error).
 
 | Módulo | Responsabilidad |
 |---|---|
-| `models.py` | `PairResult` (par de nodos, distancia calculada, distancia medida, n_muestras, error_abs_cm, error_pct, estado). |
+| `models.py` | `PairResult` (iniciador, respondedor, distancia calculada, distancia medida, n_muestras, error_abs_cm, error_pct, estado) — una fila por **dirección** medida, no por par físico (ver decisión D6). |
 | `build.py` | Arma el resumen (PASS = medición dentro de tolerancia, FAIL = fuera de tolerancia, ERROR = no se pudo medir) a partir de una lista de `PairResult`. |
 | `write.py` | Escribe `reports/medicion-<sala>-<timestamp>.json` y `.md`, mismo patrón que `validation/report.py` del repo hermano. |
 
@@ -107,9 +107,10 @@ no se pueden invocar por error).
 |---|---|
 | **D1** — Portar (copiar y adaptar) el transporte BLE y el cliente de comandos Qorvo de `dwm3001c_cli` a `src/imop_measure/{transport,core}/`, en vez de depender del repo hermano en tiempo de ejecución o reimplementarlos desde cero. | El código de `dwm3001c_cli` ya está validado contra hardware real, incluyendo una sesión de ranging completa por BLE (`docs/verificacion-comandos-responder-ble.md` del repo hermano) — reimplementarlo de cero reintroduciría bugs ya resueltos (fragmentación de `SESSION_INFO_NTF`, filtrado del prompt Zephyr, reconexión BLE tras inactividad, buffer colgado sin cierre). Depender de una instalación editable del repo hermano (`pip install -e ../i-mop-qorvo-CLI-script`, como se hizo originalmente en la Fase F2) ataba este proyecto a tener ese otro repo clonado al lado en la ruta correcta — no es una herramienta independiente. Portar el código (con su procedencia documentada: commit `ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd`) resuelve ambos problemas a la vez. **Costo aceptado:** un fix de protocolo descubierto en el repo hermano no se propaga solo — hay que portarlo a mano si aplica también acá. |
 | **D2** — `ranging/` no conoce Typer/Rich. | Habilita reusar toda la orquestación desde una futura GUI (Fase F7) sin reescritura, igual que hizo el repo hermano con `dwm-gui`. |
-| **D3** — Un par de nodos se mide de a uno por vez (no todos en paralelo). | El firmware/BLE del repo hermano documenta un límite duro de conexiones BLE simultáneas (`max_concurrent_connections` en `[ble_timeouts]`, ~5-7 según el bridge). Medir de a pares evita saturar el enlace y simplifica el manejo de errores por nodo. Paralelizar queda para una fase posterior si el tiempo total de campaña lo justifica. |
+| **D3** — Una medición direccional se hace de a una por vez (no todas en paralelo), reconectando ambos nodos en cada una — incluso si el mismo nodo actúa de iniciador varias veces seguidas contra distintos respondedores. | El firmware/BLE del repo hermano documenta un límite duro de conexiones BLE simultáneas (`max_concurrent_connections` en `[ble_timeouts]`, ~5-7 según el bridge). Medir de a una evita saturar el enlace y simplifica el manejo de errores por nodo. Reusar la conexión BLE del iniciador entre respondedor y respondedor (para no reconectarlo en cada vuelta) quedó explícitamente pospuesto: con la cantidad de nodos actual (2) el costo extra de reconectar es mínimo, y es una optimización de `pair_runner.py`/`campaign.py` más grande de lo que se justifica hoy. Se revisará si el tiempo total de campaña con más nodos lo justifica. Paralelizar mediciones distintas queda para una fase posterior. |
 | **D4** — El archivo de ambiente vive en `environments/`, no en la raíz del repo. | Coincide con el propio encabezado de `sala_20.toml` (`# environments/sala_20.toml`) y dejar la raíz del repo limpia para múltiples ambientes futuros. |
 | **D5** — `reports/` y `logs/` se generan en tiempo de ejecución y están gitignored. | Mismo patrón que el repo hermano: son salidas, no fuente de verdad versionada. |
+| **D6** — Cada nodo mide contra todos los demás en **ambas direcciones** (`N·(N-1)` mediciones, permutaciones) en vez de un solo valor por par sin orden (`N·(N-1)/2`, combinaciones); las dos direcciones de un mismo par físico se reportan por separado, sin promediar. | Pedido explícito del usuario tras cerrar la Fase F3: la distancia geométrica es simétrica, pero la distancia UWB medida puede no serlo (asimetrías de hardware/protocolo entre el rol iniciador y respondedor) — promediar A→B y B→A escondería esa asimetría si existiera. Motivó además que `pair_runner.run_pair` pasara de `anchor_a`/`anchor_b` posicionales (con una convención implícita de roles) a `initiator`/`responder` keyword-only explícitos. Ver `docs/plan-implementacion.md` Fase F4. |
 
 ## 4. Flujo de datos: campaña de medición completa
 
@@ -118,16 +119,16 @@ CLI (app/cli.py: `imop-measure run --environment environments/sala_20.toml`)
   │
   ├─ config/loader.py        → Ambiente (lista de Anchor)
   │
-  ├─ geometry/pairs.py        → lista de pares (Anchor, Anchor)
-  ├─ geometry/distance.py     → distancia calculada por par
+  ├─ geometry/pairs.py        → pares sin orden (Anchor, Anchor), para la distancia geometrica
+  ├─ geometry/distance.py     → distancia calculada por par (simetrica)
   │
-  ├─ ranging/campaign.py
-  │     └─ por cada par → ranging/pair_runner.py
+  ├─ ranging/campaign.py      → pares CON orden: cada nodo como iniciador contra cada otro
+  │     └─ por cada (iniciador, respondedor) → ranging/pair_runner.py
   │           ├─ transport.ble_link.BleTransport (x2, uno por nodo)
-  │           ├─ core.client.DwmCliClient.setapp / start_respf / start_initf
+  │           ├─ core.client.DwmCliClient.start_respf / start_initf
   │           ├─ lectura de notificaciones SESSION_INFO_NTF → distancia medida (promedio)
   │           └─ qorvo STOP + qorvo off + desconexión
   │
-  ├─ report/build.py          → PairResult por par (calculada, medida, error, estado)
+  ├─ report/build.py          → PairResult por direccion medida (calculada, medida, error, estado)
   └─ report/write.py          → reports/medicion-<sala>-<timestamp>.{json,md}
 ```

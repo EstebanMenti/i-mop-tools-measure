@@ -1,7 +1,9 @@
-"""Medicion de la distancia real entre un par de nodos, via BLE + sesion FiRa.
+"""Medicion de la distancia real entre un iniciador y un respondedor, via
+BLE + sesion FiRa.
 
 Ver docs/protocolo-ble-qorvo.md secciones 3-4 para la secuencia exacta de
-comandos, y docs/plan-implementacion.md Fase F3 para el criterio de diseno.
+comandos, y docs/plan-implementacion.md Fase F3/F4 para el criterio de
+diseno (incluida la decision de medir cada par en las dos direcciones).
 """
 
 import logging
@@ -33,7 +35,13 @@ _TransportFactory = Callable[[str], BleTransport]
 
 @dataclass(frozen=True)
 class MeasuredPair:
-    """Resultado de medir la distancia real entre dos nodos.
+    """Resultado de medir la distancia real entre un iniciador y un respondedor.
+
+    Cada nodo del ambiente mide contra todos los demas en ambos roles
+    (ver `ranging/campaign.py`), asi que el mismo par fisico de nodos
+    produce dos `MeasuredPair`, uno por direccion (`initiator`/`responder`
+    intercambiados) — se mantienen separados a proposito, no promediados,
+    para poder detectar asimetrias de hardware/protocolo entre nodos.
 
     `error` es `None` solo si se juntó al menos una muestra `SUCCESS`;
     cualquier otra falla (conexión, modo inesperado, timeout, cero
@@ -41,8 +49,8 @@ class MeasuredPair:
     ver `run_pair`.
     """
 
-    anchor_a: Anchor
-    anchor_b: Anchor
+    initiator: Anchor
+    responder: Anchor
     distance_cm_samples: list[int]
     mean_cm: float | None
     std_cm: float | None
@@ -52,15 +60,15 @@ class MeasuredPair:
 
 
 def run_pair(
-    anchor_a: Anchor,
-    anchor_b: Anchor,
     *,
+    initiator: Anchor,
+    responder: Anchor,
     session: SessionParams,
     n_samples: int,
     ble_timeouts: Mapping[str, float],
     _transport_factory: _TransportFactory | None = None,
 ) -> MeasuredPair:
-    """Conecta a ambos nodos, configura `anchor_a`=RESPF/`anchor_b`=INITF,
+    """Conecta a ambos nodos, configura `responder`=RESPF/`initiator`=INITF,
     junta hasta `n_samples` muestras `SUCCESS` de `SESSION_INFO_NTF`, y
     detiene/apaga/desconecta ambos nodos siempre, incluso ante error.
 
@@ -70,52 +78,57 @@ def run_pair(
     `ranging/campaign.py`, Fase F4).
     """
     make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
-    transport_a = make_transport(anchor_a.mac)
-    transport_b = make_transport(anchor_b.mac)
+    transport_init = make_transport(initiator.mac)
+    transport_resp = make_transport(responder.mac)
     command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
-    client_a = DwmCliClient(
-        transport_a, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
+    client_init = DwmCliClient(
+        transport_init, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
     )
-    client_b = DwmCliClient(
-        transport_b, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
+    client_resp = DwmCliClient(
+        transport_resp, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
     )
 
-    connected_a = connected_b = False
+    connected_init = connected_resp = False
     try:
-        transport_a.open()  # conecta + "qorvo on" + settle
-        connected_a = True
-        transport_b.open()
-        connected_b = True
+        transport_resp.open()  # conecta + "qorvo on" + settle
+        connected_resp = True
+        transport_init.open()
+        connected_init = True
 
-        client_a.ensure_mode_none()
-        client_b.ensure_mode_none()
+        client_resp.ensure_mode_none()
+        client_init.ensure_mode_none()
 
-        addr_a = uwb_addr_to_int(anchor_a.uwb_addr)
-        addr_b = uwb_addr_to_int(anchor_b.uwb_addr)
+        addr_init = uwb_addr_to_int(initiator.uwb_addr)
+        addr_resp = uwb_addr_to_int(responder.uwb_addr)
 
-        # anchor_a = respondedor, anchor_b = iniciador; el respondedor
-        # arranca primero para no perderse la primera transmision del
-        # iniciador (ver docs/protocolo-ble-qorvo.md seccion 3).
-        client_a.start_respf(**responder_kwargs(session, addr=addr_a, paddr=addr_b))
-        client_b.start_initf(**initiator_kwargs(session, addr=addr_b, paddr=addr_a))
+        # El respondedor arranca primero para no perderse la primera
+        # transmision del iniciador (ver docs/protocolo-ble-qorvo.md
+        # seccion 3).
+        client_resp.start_respf(**responder_kwargs(session, addr=addr_resp, paddr=addr_init))
+        client_init.start_initf(**initiator_kwargs(session, addr=addr_init, paddr=addr_resp))
 
-        successes = _collect_success_samples(client_b, session=session, n_samples=n_samples)
+        successes = _collect_success_samples(client_init, session=session, n_samples=n_samples)
 
-        client_a.stop()
-        client_b.stop()
+        client_resp.stop()
+        client_init.stop()
 
         error = None if successes else "sin mediciones SUCCESS recibidas"
-        return _build_result(anchor_a, anchor_b, successes, n_samples, error)
+        return _build_result(initiator, responder, successes, n_samples, error)
     except MeasureError as exc:
-        logger.warning("Fallo midiendo %s <-> %s: %s", anchor_a.nombre, anchor_b.nombre, exc)
-        return _build_result(anchor_a, anchor_b, [], n_samples, str(exc))
+        logger.warning(
+            "Fallo midiendo iniciador=%s respondedor=%s: %s",
+            initiator.nombre,
+            responder.nombre,
+            exc,
+        )
+        return _build_result(initiator, responder, [], n_samples, str(exc))
     finally:
-        if connected_a:
-            _safe_power_off(transport_a)
-        if connected_b:
-            _safe_power_off(transport_b)
-        transport_a.close()
-        transport_b.close()
+        if connected_resp:
+            _safe_power_off(transport_resp)
+        if connected_init:
+            _safe_power_off(transport_init)
+        transport_resp.close()
+        transport_init.close()
 
 
 def _default_transport_factory(ble_timeouts: Mapping[str, float]) -> _TransportFactory:
@@ -154,8 +167,8 @@ def _collect_success_samples(
 
 
 def _build_result(
-    anchor_a: Anchor,
-    anchor_b: Anchor,
+    initiator: Anchor,
+    responder: Anchor,
     successes: list[int],
     n_samples: int,
     error: str | None,
@@ -163,8 +176,8 @@ def _build_result(
     mean_cm = statistics.fmean(successes) if successes else None
     std_cm = statistics.pstdev(successes) if successes else None
     return MeasuredPair(
-        anchor_a=anchor_a,
-        anchor_b=anchor_b,
+        initiator=initiator,
+        responder=responder,
         distance_cm_samples=successes,
         mean_cm=mean_cm,
         std_cm=std_cm,
