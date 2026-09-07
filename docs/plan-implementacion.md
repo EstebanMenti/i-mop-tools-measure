@@ -31,7 +31,7 @@
 |---|---|---|---|---|
 | F0 | Andamiaje: `pyproject.toml`, estructura `src/`, `.gitignore`, pre-commit | `feature/f0-andamiaje` | — | ✅ (este PR) |
 | F1 | `config/` + `geometry/`: leer TOML, calcular distancias y pares | `feature/f1-config-geometria` | F0 | ✅ |
-| F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ⬜ |
+| F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ✅ |
 | F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2 | ⬜ |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ⬜ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ⬜ |
@@ -141,6 +141,17 @@ de anclas, cambia a medida que se agregan nodos reales.
 
 Criterio de aceptación: tests unitarios de `addressing.py` (sin hardware)
 cubriendo `"00:02"` → `2`, `"0a:ff"` → `2815`, formato inválido → error.
+
+**Decisión tomada:** se reusa `dwm3001c_cli.calibration.sampler.SessionParams`
+directamente (re-exportada desde `ranging/session.py`) en vez de duplicarla.
+`ranging/session.py` agrega `initiator_kwargs()`/`responder_kwargs()` como
+funciones que envuelven `SessionParams.initiator_kwargs()`/`responder_kwargs()`
+y sobreescriben `addr`/`paddr` con las direcciones reales del par (esos
+métodos originales asumen los defaults de rol `0`/`1`). `mac_from_ntf()` no
+se implementó — nada lo consume todavía (se evalúa en F3 si hace falta).
+`dwm3001c_cli` no publica `py.typed`, así que se agregó un override en
+`pyproject.toml` (`[[tool.mypy.overrides]]`, `ignore_missing_imports` para
+`dwm3001c_cli.*`) en vez de silenciar el import línea por línea.
 
 ## 5. F3 — Medición de un par (`pair_runner.py`)
 
