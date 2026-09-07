@@ -33,7 +33,7 @@
 | F1 | `config/` + `geometry/`: leer TOML, calcular distancias y pares | `feature/f1-config-geometria` | F0 | ✅ |
 | F2 | Dependencia de `dwm3001c_cli`, `ranging/addressing.py`, `ranging/session.py` | `feature/f2-transporte-ble` | F1 | ✅ |
 | F2b | Porta `transport/` + `core/` (BleTransport, DwmCliClient, parsers) desde `dwm3001c_cli` para dejar de depender de él en runtime | `refactor/vendoriza-transporte-ble` | F2 | ✅ |
-| F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ⬜ |
+| F3 | `ranging/pair_runner.py`: medición de un par de nodos, con fakes para test | `feature/f3-sesion-ranging` | F2b | ✅ (verificado contra hardware real 2026-09-07) |
 | F4 | `ranging/campaign.py`: orquestación de todos los pares del ambiente | `feature/f4-orquestacion-campania` | F3 | ⬜ |
 | F5 | `report/`: construcción y escritura de reporte JSON + Markdown | `feature/f5-reporte` | F1, F4 | ⬜ |
 | F6 | `app/cli.py`: comando `imop-measure run`, end-to-end | `feature/f6-cli` | F5 | ⬜ |
@@ -244,13 +244,25 @@ Secuencia exacta (ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md) §3-4):
 
 Tests: con fakes de `DwmCliClient`/`BleTransport` (mismo patrón
 `FakeTransport` del repo hermano) alimentados con notificaciones
-`SESSION_INFO_NTF` capturadas reales — no requieren hardware. Casos:
-todas SUCCESS, mezcla SUCCESS/RX_TIMEOUT, 0% SUCCESS (debe marcar el par
-como error, no crashear).
+`SESSION_INFO_NTF` capturadas reales — no requieren hardware. Casos
+implementados en `tests/test_ranging_pair_runner.py`: todas SUCCESS,
+mezcla SUCCESS/RX_TIMEOUT, 0% SUCCESS (marca el par como error, no
+crashea), fallo de conexión BLE, y el formato real de 3 fragmentos de
+`SESSION_INFO_NTF` (ver más abajo). Ejercitan `BleTransport`/`DwmCliClient`
+reales inyectando un `FakeBleakClient` scripteado (no un doble de más
+alto nivel), para probar el código de producción real.
 
-Tests marcados `@pytest.mark.hardware` (excluidos por defecto): correr
-`run_pair` contra dos nodos reales y verificar que la distancia medida
-esté en un rango físicamente razonable.
+**Verificado contra hardware real (2026-09-07):** `test_run_pair_against_real_nodes`
+(`@pytest.mark.hardware`) corrió `run_pair` contra `uwb_node_10` y
+`uwb_node_11` físicos de `environments/sala_20.toml` — **15/15 muestras
+SUCCESS, distancia media 341.9 cm, desvío estándar 2.1 cm**, sin ningún
+error. De paso se descubrió que el formato real de `SESSION_INFO_NTF`
+sobre estos nodos llega en **3** fragmentos (no 2 como documentaba el
+repo hermano) — ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md)
+sección 4 para el detalle exacto; el parser tolerante ya lo maneja bien
+sin cambios de código, y ese formato real quedó fijado como test de
+regresión (`test_run_pair_handles_real_three_fragment_notification`).
+**La Fase F3 queda cerrada.**
 
 ## 6. F4 — Campaña completa (`campaign.py`)
 
@@ -258,7 +270,7 @@ esté en un rango físicamente razonable.
 def run_campaign(
     ambiente: Ambiente,
     *,
-    session: SessionConfig,
+    session: SessionParams,
     n_samples: int,
     on_pair_done: Callable[[MeasuredPair], None] | None = None,
 ) -> list[MeasuredPair]:
