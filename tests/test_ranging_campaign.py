@@ -162,6 +162,40 @@ def test_run_campaign_open_initiator_failure_marks_whole_group_error() -> None:
     assert mock_close.call_count == 2
 
 
+def test_run_campaign_open_initiator_unexpected_exception_does_not_abort_campaign() -> None:
+    """`open_initiator` puede fallar con algo que no sea `MeasureError` (un
+    bug, no una falla de conexion esperable) -- tampoco debe abortar el
+    resto de la campaña, mismo criterio que ya aplica al loop de
+    mediciones (ver test_run_campaign_closes_initiator_even_if_a_measurement_raises).
+    """
+    anchors = [_anchor("a"), _anchor("b"), _anchor("c")]
+
+    def open_initiator_side_effect(initiator: Anchor, **_kwargs: object) -> InitiatorHandle:
+        if initiator.key == "b":
+            raise RuntimeError("bug simulado, no MeasureError")
+        return _fake_open_initiator(initiator)
+
+    with (
+        patch(
+            "imop_measure.ranging.campaign.open_initiator",
+            side_effect=open_initiator_side_effect,
+        ),
+        patch(
+            "imop_measure.ranging.campaign.run_directed_measurement",
+            side_effect=_fake_measurement,
+        ),
+        patch("imop_measure.ranging.campaign.close_initiator"),
+    ):
+        results = campaign.run_campaign(_ambiente(anchors), session=SessionParams(), n_samples=1)
+
+    assert len(results) == 6
+    b_results = [r for r in results if r.initiator.key == "b"]
+    assert len(b_results) == 2
+    assert all("bug simulado, no MeasureError" in (r.error or "") for r in b_results)
+    other_results = [r for r in results if r.initiator.key != "b"]
+    assert all(r.error is None for r in other_results)
+
+
 def test_run_campaign_closes_initiator_even_if_a_measurement_raises() -> None:
     anchors = [_anchor("a"), _anchor("b"), _anchor("c")]
     call_count = 0
