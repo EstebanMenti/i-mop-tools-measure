@@ -30,6 +30,22 @@ _DEFAULT_CONNECTION_TIMEOUT_S = 180.0
 _DEFAULT_COMMAND_TIMEOUT_S = 5.0
 _DEFAULT_QORVO_COMMAND_TIMEOUT_S = 10.0
 
+# Mientras se juntan muestras solo se lee el enlace BLE del iniciador (ver
+# `_collect_success_samples`); el del respondedor no recibe trafico propio
+# y se desconecta solo tras ~7-8s de inactividad (ver transport/ble_link.py,
+# confirmado contra hardware real 2026-09-08: UWB-Node-11 se desconecto a
+# los ~15s de inactividad). Un STAT periodico, bien por debajo de ese
+# umbral, mantiene el enlace vivo sin tocar la sesion RESPF en curso (STAT
+# es una consulta de solo lectura, no reinicia ni reconfigura la app —
+# a diferencia de INITF/RESPF, ver docs/protocolo-ble-qorvo.md seccion 3).
+#
+# [Verificado 2026-09-08 contra hardware real]: environments/sala_20.toml
+# (3 anclas, 6 direcciones) corrio de punta a punta con este keepalive
+# activo, 30/30 muestras SUCCESS en las 6 direcciones y cero errores de
+# conexion BLE — antes del fix, 2/6 terminaban en error (0/30) con
+# UWB-Node-11 como respondedor (ver reports/medicion-20-20260908-084928.md).
+_RESPONDER_KEEPALIVE_INTERVAL_S = 5.0
+
 _TransportFactory = Callable[[str], BleTransport]
 
 
@@ -89,6 +105,7 @@ def run_pair(
     )
 
     connected_init = connected_resp = False
+    successes: list[int] = []
     try:
         transport_resp.open()  # conecta + "qorvo on" + settle
         connected_resp = True
@@ -107,10 +124,16 @@ def run_pair(
         client_resp.start_respf(**responder_kwargs(session, addr=addr_resp, paddr=addr_init))
         client_init.start_initf(**initiator_kwargs(session, addr=addr_init, paddr=addr_resp))
 
-        successes = _collect_success_samples(client_init, session=session, n_samples=n_samples)
+        successes = _collect_success_samples(
+            client_init, session=session, n_samples=n_samples, keepalive_client=client_resp
+        )
 
-        client_resp.stop()
-        client_init.stop()
+        # Tolerante a fallas (ver _stop_quietly): si el enlace del
+        # respondedor ya se desconecto solo por inactividad y reconectar
+        # para mandar STOP falla, no hay que invalidar muestras que ya se
+        # juntaron del lado del iniciador.
+        _stop_quietly(client_resp)
+        _stop_quietly(client_init)
 
         error = None if successes else "sin mediciones SUCCESS recibidas"
         return _build_result(initiator, responder, successes, n_samples, error)
@@ -121,7 +144,7 @@ def run_pair(
             responder.nombre,
             exc,
         )
-        return _build_result(initiator, responder, [], n_samples, str(exc))
+        return _build_result(initiator, responder, successes, n_samples, str(exc))
     finally:
         if connected_resp:
             _safe_power_off(transport_resp)
@@ -144,17 +167,28 @@ def _default_transport_factory(ble_timeouts: Mapping[str, float]) -> _TransportF
 
 
 def _collect_success_samples(
-    client: DwmCliClient, *, session: SessionParams, n_samples: int
+    client: DwmCliClient,
+    *,
+    session: SessionParams,
+    n_samples: int,
+    keepalive_client: DwmCliClient | None = None,
+    keepalive_interval_s: float = _RESPONDER_KEEPALIVE_INTERVAL_S,
 ) -> list[int]:
     """Lee notificaciones del iniciador hasta juntar `n_samples` muestras
     `SUCCESS` o agotar el tiempo estimado para esa cantidad de muestras.
 
     Mismo criterio de ventana que `dwm3001c_cli.calibration.sampler` (repo
     hermano): al menos 3 bloques de margen por muestra pedida.
+
+    `keepalive_client`, si se pasa, recibe un `STAT` cada
+    `keepalive_interval_s` mientras se espera (ver
+    `_RESPONDER_KEEPALIVE_INTERVAL_S`) — pensado para el respondedor, cuyo
+    enlace BLE si no queda sin trafico propio durante toda la espera.
     """
     limit_s = n_samples * session.block_ms * 3 / 1000
     deadline = time.monotonic() + limit_s
     successes: list[int] = []
+    last_keepalive = time.monotonic()
     while len(successes) < n_samples:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -163,7 +197,42 @@ def _collect_success_samples(
         for measurement in client.read_notifications(duration_s=window_s, max_count=1):
             if measurement.status == "SUCCESS" and measurement.distance_cm is not None:
                 successes.append(measurement.distance_cm)
+        if keepalive_client is not None:
+            now = time.monotonic()
+            if now - last_keepalive >= keepalive_interval_s:
+                _keep_responder_alive(keepalive_client)
+                last_keepalive = now
     return successes
+
+
+def _keep_responder_alive(client: DwmCliClient) -> None:
+    """Consulta `STAT` (solo lectura) para que el enlace BLE del respondedor
+    no quede inactivo mientras dura el muestreo (ver
+    `_RESPONDER_KEEPALIVE_INTERVAL_S`). Una falla aca no debe abortar la
+    medicion en curso — se loguea y se sigue, igual que `_stop_quietly`.
+    """
+    try:
+        client.stat()
+    except MeasureError:
+        logger.debug(
+            "%s: keepalive STAT fallo durante el muestreo (se ignora)", client.name, exc_info=True
+        )
+
+
+def _stop_quietly(client: DwmCliClient) -> None:
+    """Manda `STOP` tolerando que el enlace BLE haya quedado inactivo y la
+    reconexion para mandarlo falle (ver `run_pair`): a esta altura ya se
+    juntaron (o no) las muestras, y una falla de limpieza no debe
+    invalidarlas.
+    """
+    try:
+        client.stop()
+    except MeasureError:
+        logger.warning(
+            "%s: fallo al detener la app al final de la medicion (se ignora)",
+            client.name,
+            exc_info=True,
+        )
 
 
 def _build_result(

@@ -179,6 +179,55 @@ def test_run_pair_zero_success_marks_error_without_raising() -> None:
     assert result.std_cm is None
 
 
+def test_run_pair_keeps_successes_when_final_stop_fails() -> None:
+    """Reproduce el caso real (UWB-Node-11 como respondedor, 2026-09-08,
+    ver reports/medicion-20-20260908-084928.md): el enlace BLE del
+    respondedor se cae por inactividad durante el muestreo y, al mandar
+    `STOP` al terminar, reconectar falla. Antes del fix, `run_pair`
+    descartaba las muestras ya juntadas del iniciador y reportaba 0
+    SUCCESS; ahora deben conservarse.
+    """
+    script_a, script_b = _base_scripts()
+    script_a[RESPF_COMMAND] = [b"ok\r\n"]
+    script_b[INITF_COMMAND] = [
+        b"ok\r\n",
+        *_ntf_fragments(0, distance_cm=200),
+    ]
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)  # ANCHOR_A = responder
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+
+    original_write = fake_b.write_gatt_char
+
+    async def write_then_drop_responder(
+        char_specifier: str, data: bytes, response: bool | None = None
+    ) -> None:
+        await original_write(char_specifier, data, response=response)
+        text = bytes(data).decode("ascii").rstrip("\n")
+        if text == f"qorvo {INITF_COMMAND}":
+            # Simula la desconexion por inactividad del respondedor (ver
+            # transport/ble_link.py) justo cuando arranca el muestreo, y
+            # que la reconexion posterior (para el STOP final) tambien
+            # falle -- la falla transitoria real y documentada del backend
+            # BLE de Windows.
+            fake_a.simulate_disconnect()
+            fake_a.fail_connect = True
+
+    fake_b.write_gatt_char = write_then_drop_responder  # type: ignore[method-assign]
+
+    result = run_pair(
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=_make_factory(fake_a, fake_b),
+    )
+
+    assert result.error is None
+    assert result.n_success == 1
+    assert result.distance_cm_samples == [200]
+
+
 def test_run_pair_connect_failure_marks_error_without_raising() -> None:
     fake_a = FakeBleakClient(ANCHOR_A.mac, fail_connect=True)  # ANCHOR_A = responder
     fake_b = FakeBleakClient(ANCHOR_B.mac)
