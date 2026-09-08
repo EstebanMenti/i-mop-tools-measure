@@ -45,14 +45,30 @@ participan en el cálculo de pares ni en la campaña de medición.
 
 ### `[ble_timeouts]` (opcional — se usan defaults si se omite)
 
-Timeouts específicos de BLE para el ambiente. Ver comentarios inline en
-`environments/sala_20.toml` para la lista completa
-(`connection_timeout`, `command_timeout`, `mtu_negotiation_wait`,
-`mtu_retry_wait`, `mtu_retry_attempts`, `session_end_timeout`,
-`power_off_connection_timeout`, `max_concurrent_connections`,
-`monitor_interval`, `qorvo_command_timeout`). Estos mismos nombres y
-valores por defecto son los que usa `i-mop-qorvo-CLI-script`, así que se
-reusan tal cual — no reinventar otro esquema de timeouts.
+Timeouts específicos de BLE para el ambiente. El esquema completo (todos
+los nombres de campo) es el mismo que usa `i-mop-qorvo-CLI-script`, para
+no reinventar otro — pero **no todos los campos están implementados
+todavía** en `imop-tools-measure`. Verificado contra el código
+(`ranging/pair_runner.py`, único lugar que lee `ble_timeouts`):
+
+| Campo | Estado |
+|---|---|
+| `connection_timeout` | ✅ usado (timeout de `BleTransport.open()`) |
+| `command_timeout` | ✅ usado (timeout de escritura GATT de `BleTransport`) |
+| `qorvo_command_timeout` | ✅ usado (timeout de `DwmCliClient.send_command`) |
+| `mtu_negotiation_wait` | ⛔ reservado, sin efecto |
+| `mtu_retry_wait` | ⛔ reservado, sin efecto |
+| `mtu_retry_attempts` | ⛔ reservado, sin efecto |
+| `session_end_timeout` | ⛔ reservado, sin efecto |
+| `power_off_connection_timeout` | ⛔ reservado, sin efecto |
+| `max_concurrent_connections` | ⛔ reservado, sin efecto (todo el ranging es secuencial hoy, ver [arquitectura.md](arquitectura.md) decisión D3) |
+| `monitor_interval` | ⛔ reservado, sin efecto |
+
+Los campos "reservados" se aceptan sin error (no rompen la carga del
+TOML) pero cambiarlos no tiene ningún efecto observable — quedan
+documentados para cuando se implementen, ver comentarios inline en
+`environments/sala_20.toml`. No asumir que existen por estar en el TOML
+del repo hermano.
 
 ## 3. Mapeo `uwb_addr` → `ADDR`/`PADDR` decimal
 
