@@ -25,7 +25,9 @@ reports/medicion-<sala_id>-<YYYYMMDD-HHMMSS>.md
 mismo run comparten el mismo `<timestamp>`, así que siempre quedan
 emparejados por nombre. El `.md` está pensado para abrirlo directamente
 (GitHub, un editor con vista previa, etc.) sin herramientas adicionales;
-el `.json` es para procesamiento automático (otro script, una futura GUI).
+el `.json` es para procesamiento automático (otro script, integraciones
+externas) — la GUI (`imop-measure-gui`) no lo relee: muestra los mismos
+`PairResult` en vivo, en memoria, a medida que se miden.
 
 ## 2. Una fila por dirección, no por par
 

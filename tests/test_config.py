@@ -39,8 +39,9 @@ def test_load_sala_20_real() -> None:
         "uwb_node_10",
         "uwb_node_11",
         "uwb_node_1",
+        "uwb_node_2",
     }
-    assert len(ambiente.anchors) == 3
+    assert len(ambiente.anchors) == 4
 
     node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
     assert node_11.posicion == pytest.approx((0.03, 0.03, 0.26))

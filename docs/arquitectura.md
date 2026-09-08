@@ -2,7 +2,7 @@
 
 > **Propósito:** describir las capas del proyecto, sus responsabilidades y
 > las decisiones de diseño tomadas, para que cualquier cambio (incluida la
-> futura GUI) respete la separación existente.
+> GUI de la Fase F7) respete la separación existente.
 > **Alcance:** aplica a `src/imop_measure/`. No cubre el protocolo BLE en sí
 > (ver [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md)) ni el plan de
 > fases (ver [plan-implementacion.md](plan-implementacion.md)).
@@ -40,8 +40,9 @@ Esta separación es la misma que usa `i-mop-qorvo-CLI-script`
 (`app → validation/calibration → core → transport`), deliberadamente: ese
 repo ya demostró que permite construir una GUI (`dwm-gui`) sin tocar la
 lógica de negocio, y de hecho `core/` y `transport/` de este proyecto son
-un puerto directo de los suyos (ver decisión D1). Es el mismo camino que se
-espera para este proyecto (script → herramienta visual, ver plan F7).
+un puerto directo de los suyos (ver decisión D1). Este proyecto siguió el
+mismo camino: `gui/` (Fase F7, ver §2.6) reusa `ranging`/`geometry`/
+`config`/`report` sin modificarlos.
 
 ## 2. Módulos
 
@@ -90,7 +91,7 @@ no se pueden invocar por error).
 
 | Módulo | Responsabilidad |
 |---|---|
-| `models.py` | `PairResult` (iniciador, respondedor, distancia calculada, distancia medida, n_muestras, error_abs_cm, error_pct, estado) — una fila por **dirección** medida, no por par físico (ver decisión D6). |
+| `models.py` | `PairResult` (iniciador, respondedor, distancia calculada, distancia medida, `diff_m`/`diff_pct` con signo, `necesita_revision`, n_muestras, estado, detalle) — una fila por **dirección** medida, no por par físico (ver decisión D6). Esquema completo con ejemplo real en [formato-reporte.md](formato-reporte.md). |
 | `build.py` | Arma el resumen (PASS = medición dentro de tolerancia, FAIL = fuera de tolerancia, ERROR = no se pudo medir) a partir de una lista de `PairResult`. |
 | `write.py` | Escribe `reports/medicion-<sala>-<timestamp>.json` y `.md`, mismo patrón que `validation/report.py` del repo hermano. |
 
@@ -99,7 +100,6 @@ no se pueden invocar por error).
 | Módulo | Responsabilidad |
 |---|---|
 | `cli.py` | App Typer (`imop-measure`). Subcomando principal: `run --environment environments/sala_20.toml`. |
-| `config_cli.py` | Resolución de opciones CLI (timeouts, cantidad de muestras, tolerancia) con precedencia CLI > TOML (`[ble_timeouts]`) > default, igual que `app/config.py` del repo hermano. |
 
 ### 2.6 `gui/` (Fase F7)
 
@@ -117,7 +117,7 @@ Ver [plan-implementacion.md](plan-implementacion.md) Fase F7 para el detalle com
 | Decisión | Justificación |
 |---|---|
 | **D1** — Portar (copiar y adaptar) el transporte BLE y el cliente de comandos Qorvo de `dwm3001c_cli` a `src/imop_measure/{transport,core}/`, en vez de depender del repo hermano en tiempo de ejecución o reimplementarlos desde cero. | El código de `dwm3001c_cli` ya está validado contra hardware real, incluyendo una sesión de ranging completa por BLE (`docs/verificacion-comandos-responder-ble.md` del repo hermano) — reimplementarlo de cero reintroduciría bugs ya resueltos (fragmentación de `SESSION_INFO_NTF`, filtrado del prompt Zephyr, reconexión BLE tras inactividad, buffer colgado sin cierre). Depender de una instalación editable del repo hermano (`pip install -e ../i-mop-qorvo-CLI-script`, como se hizo originalmente en la Fase F2) ataba este proyecto a tener ese otro repo clonado al lado en la ruta correcta — no es una herramienta independiente. Portar el código (con su procedencia documentada: commit `ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd`) resuelve ambos problemas a la vez. **Costo aceptado:** un fix de protocolo descubierto en el repo hermano no se propaga solo — hay que portarlo a mano si aplica también acá. |
-| **D2** — `ranging/` no conoce Typer/Rich. | Habilita reusar toda la orquestación desde una futura GUI (Fase F7) sin reescritura, igual que hizo el repo hermano con `dwm-gui`. |
+| **D2** — `ranging/` no conoce Typer/Rich ni Qt. | Habilita reusar toda la orquestación desde `gui/` (Fase F7, ver §2.6) sin reescritura, igual que hizo el repo hermano con `dwm-gui`. |
 | **D3** — Una medición direccional se hace de a una por vez (no todas en paralelo), reconectando ambos nodos en cada una — incluso si el mismo nodo actúa de iniciador varias veces seguidas contra distintos respondedores. | El firmware/BLE del repo hermano documenta un límite duro de conexiones BLE simultáneas (`max_concurrent_connections` en `[ble_timeouts]`, ~5-7 según el bridge). Medir de a una evita saturar el enlace y simplifica el manejo de errores por nodo. Reusar la conexión BLE del iniciador entre respondedor y respondedor (para no reconectarlo en cada vuelta) quedó explícitamente pospuesto: con la cantidad de nodos actual (2) el costo extra de reconectar es mínimo, y es una optimización de `pair_runner.py`/`campaign.py` más grande de lo que se justifica hoy. Se revisará si el tiempo total de campaña con más nodos lo justifica. Paralelizar mediciones distintas queda para una fase posterior. |
 | **D4** — El archivo de ambiente vive en `environments/`, no en la raíz del repo. | Coincide con el propio encabezado de `sala_20.toml` (`# environments/sala_20.toml`) y dejar la raíz del repo limpia para múltiples ambientes futuros. |
 | **D5** — `reports/` y `logs/` se generan en tiempo de ejecución y están gitignored. | Mismo patrón que el repo hermano: son salidas, no fuente de verdad versionada. |

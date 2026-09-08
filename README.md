@@ -5,11 +5,11 @@ nRF52840 de `I-mop-nrf52840-fw`) y la compara contra la distancia
 geométrica calculada a partir de las posiciones declaradas en un archivo de
 ambiente TOML.
 
-> **Estado:** Fases F0–F6 completas y **verificadas contra hardware real**
-> (2026-09-07) — el flujo completo (`imop-measure run`) funciona de punta
-> a punta. Falta F7 (herramienta visual). Ver
-> [docs/plan-implementacion.md](docs/plan-implementacion.md) para el
-> detalle fase por fase.
+> **Estado:** Fases F0–F7 completas y **verificadas contra hardware real**
+> (2026-09-07) — tanto el flujo por línea de comandos (`imop-measure run`)
+> como la herramienta visual (`imop-measure-gui`) funcionan de punta a
+> punta. Ver [docs/plan-implementacion.md](docs/plan-implementacion.md)
+> para el detalle fase por fase.
 
 ## 1. Qué hace este proyecto
 
@@ -21,9 +21,11 @@ ambiente TOML.
 | 4. Repetir en ambas direcciones | Cada nodo pasa por turno como iniciador contra todos los demás como respondedores — no un solo valor por par, sino uno por dirección (detecta asimetrías). |
 | 5. Reportar | Genera un reporte (JSON + Markdown) con distancia calculada vs. medida, error absoluto y porcentual por dirección medida. |
 
-Hoy es un **script/CLI**. El objetivo declarado es que evolucione a una
-**herramienta visual** una vez validado el flujo por línea de comandos —
-ver Fase F7 en [docs/plan-implementacion.md](docs/plan-implementacion.md).
+Disponible tanto como **CLI** (`imop-measure`) como **herramienta visual**
+(`imop-measure-gui`, Fase F7 en
+[docs/plan-implementacion.md](docs/plan-implementacion.md)) — ambas
+comparten la misma lógica de `ranging/`, `geometry/`, `config/` y
+`report/`.
 
 ## 2. Hardware requerido
 
@@ -75,7 +77,23 @@ completo de ambos archivos, con un ejemplo real.
 > — es la distancia *calculada* la que está desactualizada, no la
 > medición.
 
-## 6. Documentación
+## 6. Herramienta visual (GUI)
+
+```powershell
+pip install -e .[gui]
+imop-measure-gui
+```
+
+Abre una ventana (PySide6) con un formulario (archivo de ambiente,
+muestras, tolerancia PASS/FAIL, umbral de revisión, carpeta de reportes) y
+un botón "Ejecutar". La campaña corre en un hilo aparte — la ventana no se
+congela — y la tabla de resultados se llena fila por fila a medida que se
+mide cada dirección, con la misma información y los mismos criterios
+PASS/FAIL/revisar que el reporte generado por `imop-measure run` (ver
+[docs/formato-reporte.md](docs/formato-reporte.md)). Al terminar, escribe
+los mismos `reports/medicion-<sala_id>-<timestamp>.{json,md}` que la CLI.
+
+## 7. Documentación
 
 | Documento | Contenido |
 |---|---|
@@ -87,7 +105,7 @@ completo de ambos archivos, con un ejemplo real.
 | [docs/formato-ambiente-toml.md](docs/formato-ambiente-toml.md) | Esquema de `environments/sala_XX.toml` |
 | [docs/formato-reporte.md](docs/formato-reporte.md) | Esquema del reporte JSON/Markdown que genera `imop-measure run` |
 
-## 7. Desarrollo
+## 8. Desarrollo
 
 Convenciones completas en [CLAUDE.md](CLAUDE.md). Gate antes de cada
 commit/PR:

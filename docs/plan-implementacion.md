@@ -536,6 +536,7 @@ escrito correctamente. **La Fase F7 (v1) queda cerrada.**
 | `ROUND` | 25 | ídem |
 | `RRU` | `DSTWR` | ídem |
 | `VUPPER` | `01:02:03:04:05:06:07:08` | ídem |
-| `n_samples` por par | por definir (sugerido 30) | `TODO(confirmar-con-usuario)` |
-| tolerancia de error | por definir (sugerido 5 cm) | `TODO(confirmar-con-usuario)` |
+| `n_samples` por dirección | 30 (`--samples`) | implementado, sin confirmar como valor final — `TODO(confirmar-con-usuario)` en `app/cli.py`/`gui/main_window.py` |
+| tolerancia PASS/FAIL | 5.0 cm (`--tolerance-cm`) | `DEFAULT_TOLERANCE_CM` en `report/build.py`, mismo estado de confirmación que arriba |
+| umbral de revisión (`necesita_revision`) | 30.0 cm (`--review-threshold-cm`) | `DEFAULT_REVIEW_THRESHOLD_CM` en `report/build.py` — ver [formato-reporte.md](formato-reporte.md) §5 |
 | `[ble_timeouts]` | ver `environments/sala_20.toml` | mismo esquema que `i-mop-qorvo-CLI-script` |
