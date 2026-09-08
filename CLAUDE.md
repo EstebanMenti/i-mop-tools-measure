@@ -27,12 +27,12 @@ Flujo de alto nivel:
 5. Generar un reporte (JSON + Markdown) con distancia calculada vs. medida,
    error absoluto y porcentual por par.
 
-Hoy es un **script/CLI**. La intención declarada del proyecto es que
-evolucione a una **herramienta visual** (GUI) una vez validado el flujo por
-línea de comandos — ver [docs/plan-implementacion.md](docs/plan-implementacion.md)
-fase F7. Por eso la capa `core`/`ranging`/`geometry`/`report` **no debe saber
-nada de Typer/Rich** (ver §5): así se puede construir una GUI encima sin
-reescribir la lógica, tal como hizo `i-mop-qorvo-CLI-script` con `dwm-gui`.
+Disponible como **CLI** (`imop-measure`, `app/`) y como **herramienta
+visual** (`imop-measure-gui`, `gui/`, Fase F7 en
+[docs/plan-implementacion.md](docs/plan-implementacion.md)) — ambas capas
+de presentación llaman a la misma lógica de `ranging`/`geometry`/`config`/
+`report`. Por eso esas capas **no deben saber nada de Typer/Rich ni de Qt**
+(ver §5): mismo criterio que `i-mop-qorvo-CLI-script` con `dwm-gui`.
 
 ### 1.1 Repos hermanos — leer antes de tocar protocolo BLE/UWB
 
@@ -135,7 +135,10 @@ de este proyecto (`src/imop_measure/{transport,core}/`, ver
 [docs/arquitectura.md](docs/arquitectura.md) decisión D1) — no reimplementar
 ni volver a depender del repo hermano en tiempo de ejecución; si aparece un
 fix de protocolo en `i-mop-qorvo-CLI-script`, portarlo a mano acá.
-Dev: `pytest`, `ruff`, `mypy`.
+`PySide6` es dependencia **opcional** (`pip install -e .[gui]`), solo para
+`src/imop_measure/gui/` — el resto del proyecto (incluida la CLI) no la
+necesita para funcionar.
+Dev: `pytest`, `ruff`, `mypy`, `pytest-qt` (tests de `gui/`).
 
 Cualquier dependencia nueva se agrega solo si está en esta lista o si el
 usuario la aprueba explícitamente — no instalar paquetes "por si acaso".
@@ -157,7 +160,8 @@ i-mop-tools-measure/
 │   ├── core/                     # DwmCliClient + parsers del protocolo Qorvo (portado)
 │   ├── ranging/                 # orquestación de sesiones BLE/UWB por par de nodos
 │   ├── report/                  # construcción y escritura de reportes JSON/MD
-│   └── app/                     # CLI (Typer) — capa de presentación
+│   ├── app/                     # CLI (Typer) — capa de presentación
+│   └── gui/                     # herramienta visual (PySide6) — capa de presentación
 ├── tests/
 ├── reports/                    # salida en tiempo de ejecución (gitignored)
 └── logs/                       # salida en tiempo de ejecución (gitignored)
@@ -166,17 +170,20 @@ i-mop-tools-measure/
 Regla de dependencias entre capas, **una sola dirección**:
 
 ```
-app  →  ranging  →  { geometry, config, core → transport }
-app  →  report
+{app, gui}  →  ranging  →  { geometry, config, core → transport }
+{app, gui}  →  report
 ```
 
-- `geometry/` y `config/` no saben nada de BLE ni de Typer.
-- `core/` no sabe nada de Typer/Rich; `transport/` solo sabe hablar BLE
+- `geometry/` y `config/` no saben nada de BLE ni de Typer/Qt.
+- `core/` no sabe nada de Typer/Rich/Qt; `transport/` solo sabe hablar BLE
   (`bleak`), no conoce el protocolo de comandos del Qorvo.
-- `ranging/` no sabe nada de Typer/Rich (para poder reusarse desde una
-  futura GUI).
+- `ranging/` no sabe nada de Typer/Rich ni de Qt — la reusan por igual
+  `app/` (CLI) y `gui/` (herramienta visual).
 - `report/` no sabe cómo se obtuvieron los datos, solo los recibe y los
   formatea/escribe.
+- `gui/` corre `ranging.campaign.run_campaign` en un `QThread` (ver
+  [docs/arquitectura.md](docs/arquitectura.md) decisión D7) — es la única
+  capa que conoce Qt, igual que `app/` es la única que conoce Typer/Rich.
 
 ## 6. Reglas de documentación
 
