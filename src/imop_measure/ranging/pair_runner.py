@@ -75,44 +75,114 @@ class MeasuredPair:
     error: str | None
 
 
-def run_pair(
-    *,
+@dataclass
+class InitiatorHandle:
+    """Conexion de un nodo como iniciador, mantenida abierta a lo largo de
+    varias mediciones consecutivas contra distintos respondedores (ver
+    `open_initiator`/`run_directed_measurement`/`close_initiator` y
+    `ranging/campaign.py`).
+
+    Evita pagar el costo de conectar por BLE (~10s en la practica contra
+    hardware real, con ~15-20 dispositivos BLE alrededor en el scan —
+    medido 2026-09-08) en cada direccion medida: solo hace falta una vez
+    por nodo que actua de iniciador, no una vez por par.
+    """
+
+    anchor: Anchor
+    transport: BleTransport
+    client: DwmCliClient
+
+
+def open_initiator(
     initiator: Anchor,
+    *,
+    ble_timeouts: Mapping[str, float],
+    _transport_factory: _TransportFactory | None = None,
+) -> InitiatorHandle:
+    """Conecta `initiator` y lo deja en modo `NONE`, listo para medir
+    contra varios respondedores en secuencia sin reconectar (ver
+    `run_directed_measurement`).
+
+    Nunca deja el transporte a medio abrir: si `ensure_mode_none` falla
+    tras conectar, apaga y cierra antes de propagar.
+
+    Raises:
+        MeasureError: si no se pudo conectar o no se pudo confirmar modo
+            `NONE`.
+    """
+    make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
+    transport = make_transport(initiator.mac)
+    command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
+    client = DwmCliClient(
+        transport, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
+    )
+    transport.open()  # conecta + "qorvo on" + settle
+    try:
+        client.ensure_mode_none()
+    except MeasureError:
+        _safe_power_off(transport)
+        transport.close()
+        raise
+    return InitiatorHandle(anchor=initiator, transport=transport, client=client)
+
+
+def close_initiator(handle: InitiatorHandle) -> None:
+    """Apaga y desconecta un iniciador abierto con `open_initiator`, una
+    vez terminado de medir contra todos los respondedores de su grupo.
+
+    Nunca lanza (mismo criterio que el resto de la limpieza en este
+    modulo, ver `_safe_power_off`).
+    """
+    _safe_power_off(handle.transport)
+    handle.transport.close()
+
+
+def run_directed_measurement(
+    *,
+    initiator_handle: InitiatorHandle,
     responder: Anchor,
     session: SessionParams,
     n_samples: int,
     ble_timeouts: Mapping[str, float],
     _transport_factory: _TransportFactory | None = None,
 ) -> MeasuredPair:
-    """Conecta a ambos nodos, configura `responder`=RESPF/`initiator`=INITF,
-    junta hasta `n_samples` muestras `SUCCESS` de `SESSION_INFO_NTF`, y
-    detiene/apaga/desconecta ambos nodos siempre, incluso ante error.
+    """Mide una direccion contra `responder`, reusando la conexion ya
+    abierta de `initiator_handle` (ver `open_initiator`).
+
+    Conecta y desconecta el respondedor igual que antes hacia `run_pair`
+    (incluido el keepalive del respondedor durante el muestreo, ver
+    `_collect_success_samples`); lo unico que cambia es que el iniciador
+    ya esta conectado y no se cierra aca — lo cierra quien abrio el grupo
+    (ver `close_initiator`).
 
     Nunca lanza: cualquier falla (conexión, modo inesperado, timeout, cero
-    muestras SUCCESS) se refleja en `MeasuredPair.error`, para que un par
-    fallido no aborte una campaña de medición completa (ver
-    `ranging/campaign.py`, Fase F4).
+    muestras SUCCESS) se refleja en `MeasuredPair.error`, para que una
+    direccion fallida no aborte el resto de las mediciones del grupo (ver
+    `ranging/campaign.py`) — incluida una falla transitoria del propio
+    iniciador ya conectado, que se reintenta de forma transparente en el
+    siguiente comando (ver transport/ble_link.py `_ensure_connected`).
     """
+    initiator = initiator_handle.anchor
+    client_init = initiator_handle.client
+
     make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
-    transport_init = make_transport(initiator.mac)
     transport_resp = make_transport(responder.mac)
     command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
-    client_init = DwmCliClient(
-        transport_init, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
-    )
     client_resp = DwmCliClient(
         transport_resp, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
     )
 
-    connected_init = connected_resp = False
+    connected_resp = False
     successes: list[int] = []
     try:
         transport_resp.open()  # conecta + "qorvo on" + settle
         connected_resp = True
-        transport_init.open()
-        connected_init = True
 
         client_resp.ensure_mode_none()
+        # El iniciador ya esta en NONE por open_initiator() o por el
+        # _stop_quietly() de la direccion anterior del grupo, pero se
+        # reconfirma aca (barato, un STOP+STAT): si el STOP anterior fallo
+        # en silencio, mejor detectarlo ahora que arrancar INITF a ciegas.
         client_init.ensure_mode_none()
 
         addr_init = uwb_addr_to_int(initiator.uwb_addr)
@@ -148,10 +218,55 @@ def run_pair(
     finally:
         if connected_resp:
             _safe_power_off(transport_resp)
-        if connected_init:
-            _safe_power_off(transport_init)
         transport_resp.close()
-        transport_init.close()
+
+
+def run_pair(
+    *,
+    initiator: Anchor,
+    responder: Anchor,
+    session: SessionParams,
+    n_samples: int,
+    ble_timeouts: Mapping[str, float],
+    _transport_factory: _TransportFactory | None = None,
+) -> MeasuredPair:
+    """Mide una sola direccion de punta a punta: conecta al iniciador,
+    mide contra `responder`, y desconecta al iniciador.
+
+    Envoltorio fino sobre `open_initiator` + `run_directed_measurement` +
+    `close_initiator` para el caso de una unica direccion (usado por los
+    tests y como bloque de construccion independiente); una campaña con
+    varias direcciones por iniciador usa esas piezas directamente para no
+    reconectarlo en cada una (ver `ranging/campaign.py`).
+
+    Nunca lanza: cualquier falla (conexión, modo inesperado, timeout, cero
+    muestras SUCCESS) se refleja en `MeasuredPair.error`, para que un par
+    fallido no aborte una campaña de medición completa (ver
+    `ranging/campaign.py`, Fase F4).
+    """
+    try:
+        handle = open_initiator(
+            initiator, ble_timeouts=ble_timeouts, _transport_factory=_transport_factory
+        )
+    except MeasureError as exc:
+        logger.warning(
+            "Fallo midiendo iniciador=%s respondedor=%s: %s",
+            initiator.nombre,
+            responder.nombre,
+            exc,
+        )
+        return _build_result(initiator, responder, [], n_samples, str(exc))
+    try:
+        return run_directed_measurement(
+            initiator_handle=handle,
+            responder=responder,
+            session=session,
+            n_samples=n_samples,
+            ble_timeouts=ble_timeouts,
+            _transport_factory=_transport_factory,
+        )
+    finally:
+        close_initiator(handle)
 
 
 def _default_transport_factory(ble_timeouts: Mapping[str, float]) -> _TransportFactory:
