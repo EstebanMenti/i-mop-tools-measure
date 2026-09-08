@@ -36,10 +36,9 @@ def validate_ambiente(ambiente: Ambiente, path: Path) -> None:
             f"El ambiente debe tener al menos 2 anclas activas, tiene {len(ambiente.anchors)}"
         )
 
-    keys = [anchor.key for anchor in ambiente.anchors]
-    duplicated = sorted({key for key in keys if keys.count(key) > 1})
-    if duplicated:
-        raise ConfigError(f"Claves de ancla duplicadas: {duplicated}")
+    duplicated_keys = _duplicated_values([anchor.key for anchor in ambiente.anchors])
+    if duplicated_keys:
+        raise ConfigError(f"Claves de ancla duplicadas: {duplicated_keys}")
 
     for anchor in ambiente.anchors:
         if not _UWB_ADDR_RE.match(anchor.uwb_addr):
@@ -47,3 +46,28 @@ def validate_ambiente(ambiente: Ambiente, path: Path) -> None:
                 f"Ancla '{anchor.key}': uwb_addr '{anchor.uwb_addr}' "
                 "no respeta el formato XX:YY (dos bytes hexadecimales)"
             )
+
+    # Copy-paste real detectado en produccion (2026-09-08, ver
+    # docs/arquitectura.md decision D3 y reports/medicion-20-20260908-083609.md):
+    # dos anclas con el mismo uwb_addr colisionan ADDR/PADDR y la sesion de
+    # ranging falla en silencio (0 muestras SUCCESS) en vez de dar un error
+    # claro — se detecta aca, al cargar el ambiente, en vez de recien
+    # durante una campaña.
+    duplicated_uwb_addrs = _duplicated_values([anchor.uwb_addr for anchor in ambiente.anchors])
+    if duplicated_uwb_addrs:
+        raise ConfigError(
+            f"uwb_addr duplicado entre anclas: {duplicated_uwb_addrs} - cada ancla "
+            "necesita una direccion UWB corta unica, sino la sesion de ranging no "
+            "puede distinguir el par (ver docs/formato-ambiente-toml.md)"
+        )
+
+    # Mismo criterio: dos anclas con la misma MAC BLE se conectarian como si
+    # fueran el mismo nodo fisico.
+    duplicated_macs = _duplicated_values([anchor.mac for anchor in ambiente.anchors])
+    if duplicated_macs:
+        raise ConfigError(f"mac BLE duplicada entre anclas: {duplicated_macs}")
+
+
+def _duplicated_values(values: list[str]) -> list[str]:
+    """Valores que aparecen mas de una vez en `values`, en orden alfabetico."""
+    return sorted({value for value in values if values.count(value) > 1})

@@ -112,6 +112,32 @@ def test_claves_de_ancla_duplicadas(tmp_path: Path) -> None:
         load_ambiente(toml_path)
 
 
+def test_uwb_addr_duplicado_entre_anclas(tmp_path: Path) -> None:
+    """Reproduce el caso real (2026-09-08, uwb_node_11/uwb_node_1 con el
+    mismo uwb_addr por un copy-paste sin corregir): colisiona ADDR/PADDR y
+    la sesion de ranging falla en silencio (0 muestras). Debe rechazarse
+    al cargar el ambiente, no recien durante una campaña.
+    """
+    toml_path = tmp_path / "sala_99.toml"
+    toml_path.write_text(
+        _VALID_TOML.replace('uwb_addr = "00:02"', 'uwb_addr = "00:01"'), encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigError, match="uwb_addr duplicado"):
+        load_ambiente(toml_path)
+
+
+def test_mac_duplicada_entre_anclas(tmp_path: Path) -> None:
+    toml_path = tmp_path / "sala_99.toml"
+    toml_path.write_text(
+        _VALID_TOML.replace('mac = "00:00:00:00:00:02"', 'mac = "00:00:00:00:00:01"'),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="mac BLE duplicada"):
+        load_ambiente(toml_path)
+
+
 def test_posicion_con_componentes_incorrectos(tmp_path: Path) -> None:
     toml_path = tmp_path / "sala_99.toml"
     toml_path.write_text(

@@ -8,7 +8,6 @@ from collections.abc import Callable, Iterator
 from itertools import groupby, permutations
 
 from imop_measure.config.models import Ambiente, Anchor
-from imop_measure.errors import MeasureError
 from imop_measure.ranging.pair_runner import (
     MeasuredPair,
     close_initiator,
@@ -64,12 +63,14 @@ def run_campaign(
     for initiator, responders in _grouped_by_initiator(ambiente.anchors):
         try:
             handle = open_initiator(initiator, ble_timeouts=ambiente.ble_timeouts)
-        except MeasureError as exc:
-            logger.warning(
-                "No se pudo conectar %s como iniciador, se omiten sus %d direcciones: %s",
+        except Exception as exc:
+            # Exception generica, no MeasureError: un bug aca (no solo una
+            # falla de conexion esperable) tampoco debe abortar el resto de
+            # la campaña — mismo criterio que el loop de mediciones de abajo.
+            logger.exception(
+                "No se pudo conectar %s como iniciador, se omiten sus %d direcciones",
                 initiator.nombre,
                 len(responders),
-                exc,
             )
             for responder in responders:
                 result = MeasuredPair(
