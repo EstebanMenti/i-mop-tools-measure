@@ -22,6 +22,50 @@ _HEADERS = (
     "Estado",
 )
 
+# Se muestran como tooltip al dejar el mouse sobre el header de la
+# columna (ver `headerData`, Qt.ItemDataRole.ToolTipRole — comportamiento
+# nativo de QHeaderView, no requiere wiring extra en gui/main_window.py).
+# Mismo texto que docs/formato-reporte.md secciones 4 y 7. Con saltos de
+# linea explicitos (`<br>`): Qt detecta el `<` y renderiza como rich text
+# (ver Qt::mightBeRichText) respetando los saltos; texto plano largo se
+# muestra todo en una sola linea, ilegible.
+_HEADER_TOOLTIPS = (
+    "Nodo que actuó como iniciador (INITF)<br>en esta dirección.",
+    "Nodo que actuó como respondedor (RESPF)<br>en esta dirección.",
+    "Distancia geométrica calculada a partir de<br>"
+    "las posiciones (posicion) declaradas en el<br>"
+    "archivo de ambiente.<br>"
+    "Igual en ambas direcciones de un mismo<br>"
+    "par de nodos.",
+    "Promedio de las muestras SUCCESS<br>medidas por UWB en esta dirección.",
+    "Desviación estándar de las muestras<br>"
+    "individuales entre sí (dispersión) —<br>"
+    "NO es la diferencia contra la distancia<br>"
+    "calculada.<br><br>"
+    "Un valor chico indica una medición<br>"
+    "consistente, aunque esté lejos de lo<br>"
+    "calculado.<br><br>"
+    "Un valor grande indica que las muestras<br>"
+    "variaron mucho entre sí, aunque el<br>"
+    "promedio haya caído cerca de lo calculado<br>"
+    "por casualidad.",
+    "Distancia medida menos distancia<br>"
+    "calculada, con signo (positivo = se<br>"
+    "midió más lejos de lo calculado).",
+    "La diferencia anterior como porcentaje<br>de la distancia calculada.",
+    "Marca las direcciones cuya diferencia<br>"
+    "supera el umbral de revisión<br>"
+    "(--review-threshold-cm) — probablemente<br>"
+    "un error de datos (nodo equivocado,<br>"
+    "posición mal tipeada), no ruido normal<br>"
+    "de multipath.",
+    "PASS si la diferencia está dentro de la<br>"
+    "tolerancia (--tolerance-cm).<br>"
+    "FAIL si la supera.<br>"
+    "ERROR si no se pudo medir (0 muestras<br>"
+    "SUCCESS).",
+)
+
 _ESTADO_COLOR = {
     "PASS": QColor("#2e7d32"),
     "FAIL": QColor("#b26a00"),
@@ -64,9 +108,13 @@ class CampaignResultsModel(QAbstractTableModel):
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
-        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
+        if orientation != Qt.Orientation.Horizontal:
             return None
-        return _HEADERS[section]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return _HEADERS[section]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return _HEADER_TOOLTIPS[section]
+        return None
 
     def data(
         self,
