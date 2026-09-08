@@ -21,7 +21,12 @@ import pytest
 
 from imop_measure.config.loader import load_ambiente
 from imop_measure.config.models import Anchor
-from imop_measure.ranging.pair_runner import run_pair
+from imop_measure.ranging.pair_runner import (
+    close_initiator,
+    open_initiator,
+    run_directed_measurement,
+    run_pair,
+)
 from imop_measure.ranging.session import SessionParams
 from imop_measure.transport.ble_link import BleTransport
 from tests.fakes import FakeBleakClient
@@ -42,6 +47,14 @@ ANCHOR_B = Anchor(
     posicion=(1.0, 0.0, 0.0),
     tiempo_prendido="60s",
 )
+ANCHOR_C = Anchor(
+    key="uwb_node_c",
+    nombre="UWB-Node-C",
+    mac="CC:CC:CC:CC:CC:CC",
+    uwb_addr="00:0C",
+    posicion=(2.0, 0.0, 0.0),
+    tiempo_prendido="60s",
+)
 
 STAT_NONE = (
     b'JS0080{"Info":{"Device":"X","Current App":"NONE","Version":"1.1.0",'
@@ -58,6 +71,18 @@ RESPF_COMMAND = (
 INITF_COMMAND = (
     "INITF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
     "-VUPPER=01:02:03:04:05:06:07:08 -ADDR=11 -PADDR=10"
+)
+
+# Mismo criterio, para ANCHOR_B=iniciador (addr=11/paddr=12) contra
+# ANCHOR_C=respondedor (addr=12/paddr=11) -- usado por el test de reuso de
+# conexion del iniciador contra varios respondedores.
+RESPF_COMMAND_C = (
+    "RESPF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
+    "-VUPPER=01:02:03:04:05:06:07:08 -ADDR=12 -PADDR=11"
+)
+INITF_COMMAND_B_VS_C = (
+    "INITF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
+    "-VUPPER=01:02:03:04:05:06:07:08 -ADDR=11 -PADDR=12"
 )
 
 
@@ -77,6 +102,30 @@ def _make_factory(
     fake_a: FakeBleakClient, fake_b: FakeBleakClient
 ) -> Callable[[str], BleTransport]:
     fakes = {ANCHOR_A.mac: fake_a, ANCHOR_B.mac: fake_b}
+
+    def factory(address: str) -> BleTransport:
+        fake = fakes[address]
+
+        def client_factory(
+            addr: str, disconnected_callback: Callable[[object], None] | None = None
+        ) -> FakeBleakClient:
+            fake._disconnected_callback = disconnected_callback
+            return fake
+
+        return BleTransport(
+            address,
+            power_on_settle_s=0.0,
+            power_drain_s=0.01,
+            connect_retry_attempts=1,
+            _client_factory=client_factory,
+        )
+
+    return factory
+
+
+def _make_factory_multi(fakes: dict[str, FakeBleakClient]) -> Callable[[str], BleTransport]:
+    """Igual que `_make_factory`, pero para mas de 2 nodos (ver
+    `test_initiator_connection_is_reused_across_multiple_responders`)."""
 
     def factory(address: str) -> BleTransport:
         fake = fakes[address]
@@ -243,9 +292,30 @@ def test_run_pair_connect_failure_marks_error_without_raising() -> None:
 
     assert result.error is not None
     assert result.n_success == 0
-    # El respondedor se conecta primero (ver pair_runner.run_pair); si
-    # falla, el iniciador nunca llega a abrirse.
+    # El iniciador se conecta primero (open_initiator, ver
+    # pair_runner.run_pair); si falla el respondedor, el iniciador ya
+    # conectado se cierra igual en el finally, no queda colgado.
+    assert fake_b.connect_attempts >= 1
     assert fake_b.is_connected is False
+
+
+def test_run_pair_initiator_connect_failure_marks_error_without_raising() -> None:
+    fake_a = FakeBleakClient(ANCHOR_A.mac)  # ANCHOR_A = responder
+    fake_b = FakeBleakClient(ANCHOR_B.mac, fail_connect=True)  # ANCHOR_B = iniciador
+
+    result = run_pair(
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=_make_factory(fake_a, fake_b),
+    )
+
+    assert result.error is not None
+    assert result.n_success == 0
+    # Si el propio iniciador no conecta, el respondedor ni se intenta.
+    assert fake_a.connect_attempts == 0
 
 
 def test_run_pair_handles_real_three_fragment_notification() -> None:
@@ -282,6 +352,60 @@ def test_run_pair_handles_real_three_fragment_notification() -> None:
 
     assert result.error is None
     assert result.distance_cm_samples == [337]
+
+
+def test_initiator_connection_is_reused_across_multiple_responders() -> None:
+    """`open_initiator` + 2x `run_directed_measurement` + `close_initiator`:
+    el iniciador (ANCHOR_B) debe conectarse una sola vez por BLE aunque
+    mida contra 2 respondedores distintos en secuencia -- la optimizacion
+    que usa `ranging/campaign.py` para no reconectarlo en cada direccion
+    (ver docs/arquitectura.md decision D3).
+    """
+    script_a, script_b = _base_scripts()
+    script_a[RESPF_COMMAND] = [b"ok\r\n"]
+    script_b[INITF_COMMAND] = [b"ok\r\n", *_ntf_fragments(0, distance_cm=200)]
+    script_b[INITF_COMMAND_B_VS_C] = [b"ok\r\n", *_ntf_fragments(0, distance_cm=300)]
+    script_c = {"STOP": [b"ok\r\n"], "STAT": [STAT_NONE], RESPF_COMMAND_C: [b"ok\r\n"]}
+
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+    fake_c = FakeBleakClient(ANCHOR_C.mac, script=script_c)
+    factory = _make_factory_multi(
+        {ANCHOR_A.mac: fake_a, ANCHOR_B.mac: fake_b, ANCHOR_C.mac: fake_c}
+    )
+
+    handle = open_initiator(ANCHOR_B, ble_timeouts={}, _transport_factory=factory)
+    try:
+        result_a = run_directed_measurement(
+            initiator_handle=handle,
+            responder=ANCHOR_A,
+            session=SessionParams(),
+            n_samples=1,
+            ble_timeouts={},
+            _transport_factory=factory,
+        )
+        result_c = run_directed_measurement(
+            initiator_handle=handle,
+            responder=ANCHOR_C,
+            session=SessionParams(),
+            n_samples=1,
+            ble_timeouts={},
+            _transport_factory=factory,
+        )
+    finally:
+        close_initiator(handle)
+
+    assert result_a.error is None
+    assert result_a.distance_cm_samples == [200]
+    assert result_c.error is None
+    assert result_c.distance_cm_samples == [300]
+    # El iniciador se conecto una sola vez para las 2 mediciones.
+    assert fake_b.connect_attempts == 1
+    # Los respondedores si se conectan y desconectan cada uno por su lado.
+    assert fake_a.connect_attempts == 1
+    assert fake_c.connect_attempts == 1
+    # close_initiator desconecta al iniciador recien al final del grupo.
+    assert fake_b.is_connected is False
 
 
 @pytest.mark.hardware
