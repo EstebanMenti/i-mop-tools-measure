@@ -62,6 +62,7 @@ def _build_one(
             n_samples_requested=measured.n_requested,
             estado="ERROR",
             detalle=measured.error,
+            std_measured_cm=None,
         )
 
     distance_measured_m = measured.mean_cm / 100.0
@@ -86,4 +87,5 @@ def _build_one(
         # caso measured.mean_cm tambien seria None y ya habriamos vuelto
         # arriba — queda explicito por si ese invariante cambia.
         detalle=measured.error,
+        std_measured_cm=measured.std_cm,
     )

@@ -16,6 +16,7 @@ PASS_RESULT = PairResult(
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
+    std_measured_cm=2.1,
 )
 ERROR_RESULT = PairResult(
     initiator="UWB-Node-11",
@@ -36,7 +37,7 @@ def test_model_starts_empty(qtbot: object) -> None:
     model = CampaignResultsModel()
 
     assert model.rowCount() == 0
-    assert model.columnCount() == 8
+    assert model.columnCount() == 9
 
 
 def test_add_result_appends_row(qtbot: object) -> None:
@@ -58,12 +59,30 @@ def test_data_shows_dash_for_missing_measurement(qtbot: object) -> None:
     assert model.data(index) == "-"
 
 
+def test_data_shows_dash_for_missing_std(qtbot: object) -> None:
+    model = CampaignResultsModel()
+    model.add_result(ERROR_RESULT)
+
+    index = model.index(0, 4)  # columna "Desviación (cm)"
+
+    assert model.data(index) == "-"
+
+
+def test_data_formats_std_measured(qtbot: object) -> None:
+    model = CampaignResultsModel()
+    model.add_result(PASS_RESULT)
+
+    index = model.index(0, 4)  # columna "Desviación (cm)"
+
+    assert model.data(index) == "2.1"
+
+
 def test_data_formats_signed_diff(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(PASS_RESULT)
 
-    diff_m_index = model.index(0, 4)
-    diff_pct_index = model.index(0, 5)
+    diff_m_index = model.index(0, 5)
+    diff_pct_index = model.index(0, 6)
 
     assert model.data(diff_m_index) == "+0.000"
     assert model.data(diff_pct_index) == "+0.0%"
@@ -82,4 +101,5 @@ def test_header_data(qtbot: object) -> None:
     model = CampaignResultsModel()
 
     assert model.headerData(0, Qt.Orientation.Horizontal) == "Iniciador"
-    assert model.headerData(7, Qt.Orientation.Horizontal) == "Estado"
+    assert model.headerData(4, Qt.Orientation.Horizontal) == "Desviación (cm)"
+    assert model.headerData(8, Qt.Orientation.Horizontal) == "Estado"

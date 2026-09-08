@@ -17,6 +17,7 @@ PASS_RESULT = PairResult(
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
+    std_measured_cm=2.1,
 )
 REVISAR_RESULT = PairResult(
     initiator="UWB-Node-11",
@@ -113,6 +114,17 @@ def test_write_reports_markdown_shows_calc_measured_and_both_diffs(tmp_path: Pat
     assert "5.000" in content  # calculada y medida
     assert "+0.000" in content  # diferencia en metros, con signo
     assert "+0.0%" in content  # diferencia en %, con signo
+
+
+def test_write_reports_markdown_shows_std_measured(tmp_path: Path) -> None:
+    _, md_path = write_reports([PASS_RESULT, ERROR_RESULT], sala_id="20", report_dir=tmp_path)
+
+    content = md_path.read_text(encoding="utf-8")
+
+    assert "Desviación (cm)" in content
+    assert "2.1" in content  # PASS_RESULT.std_measured_cm
+    # ERROR_RESULT no junto muestras: la columna muestra "-", no un numero.
+    assert "| — | — | ❌ ERROR |" in content
 
 
 def test_write_reports_markdown_pass_only_has_no_revision_section(tmp_path: Path) -> None:

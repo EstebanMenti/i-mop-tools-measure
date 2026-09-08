@@ -22,14 +22,16 @@ NODE_A = _anchor("a", (0.0, 0.0, 0.0))
 NODE_B = _anchor("b", (3.0, 4.0, 0.0))  # distancia geometrica: 5.0 m = 500 cm
 
 
-def _measured(mean_cm: float | None, *, error: str | None = None) -> MeasuredPair:
+def _measured(
+    mean_cm: float | None, *, error: str | None = None, std_cm: float = 0.0
+) -> MeasuredPair:
     samples = [] if mean_cm is None else [round(mean_cm)]
     return MeasuredPair(
         initiator=NODE_A,
         responder=NODE_B,
         distance_cm_samples=samples,
         mean_cm=mean_cm,
-        std_cm=0.0 if mean_cm is not None else None,
+        std_cm=std_cm if mean_cm is not None else None,
         n_success=len(samples),
         n_requested=1,
         error=error,
@@ -37,7 +39,7 @@ def _measured(mean_cm: float | None, *, error: str | None = None) -> MeasuredPai
 
 
 def test_build_results_pass_within_tolerance() -> None:
-    results = build_results([_measured(500.0)], tolerance_cm=5.0)
+    results = build_results([_measured(500.0, std_cm=2.1)], tolerance_cm=5.0)
 
     assert len(results) == 1
     result = results[0]
@@ -50,6 +52,7 @@ def test_build_results_pass_within_tolerance() -> None:
     assert result.diff_pct == pytest.approx(0.0)
     assert result.necesita_revision is False
     assert result.detalle is None
+    assert result.std_measured_cm == pytest.approx(2.1)
 
 
 def test_build_results_fail_outside_tolerance() -> None:
@@ -79,6 +82,26 @@ def test_build_results_negative_diff_when_measured_is_shorter() -> None:
     assert result.diff_pct == pytest.approx(-4.0)
 
 
+def test_build_results_std_measured_is_independent_of_diff() -> None:
+    """`std_measured_cm` refleja la dispersion entre muestras, no la
+    diferencia contra lo calculado -- dos direcciones pueden compartir el
+    mismo `diff_m` con una dispersion muy distinta (ver
+    docs/formato-reporte.md seccion 7).
+    """
+    results = build_results(
+        [
+            _measured(520.0, std_cm=1.5),  # mismo diff_m (20cm)...
+            _measured(520.0, std_cm=18.0),  # ...pero mucha mas dispersion
+        ],
+        tolerance_cm=5.0,
+    )
+
+    consistente, disperso = results
+    assert consistente.diff_m == pytest.approx(disperso.diff_m)
+    assert consistente.std_measured_cm == pytest.approx(1.5)
+    assert disperso.std_measured_cm == pytest.approx(18.0)
+
+
 def test_build_results_error_when_no_measurement() -> None:
     results = build_results([_measured(None, error="sin mediciones SUCCESS recibidas")])
 
@@ -92,6 +115,7 @@ def test_build_results_error_when_no_measurement() -> None:
     assert result.detalle == "sin mediciones SUCCESS recibidas"
     # La distancia calculada se informa igual, aunque la medicion haya fallado.
     assert result.distance_calc_m == pytest.approx(5.0)
+    assert result.std_measured_cm is None
 
 
 def test_build_results_zero_calculated_distance_has_no_diff_pct() -> None:

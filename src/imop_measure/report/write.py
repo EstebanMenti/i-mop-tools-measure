@@ -130,8 +130,8 @@ def _render_resumen_table(resumen: dict[str, int]) -> list[str]:
 def _render_detalle_table(results: list[PairResult]) -> list[str]:
     lines = [
         "| # | Dirección | Distancia calculada (m) | Distancia medida (m) | "
-        "Diferencia (m) | Diferencia (%) | Revisar | Estado |",
-        "|---|---|---|---|---|---|---|---|",
+        "Desviación (cm) | Diferencia (m) | Diferencia (%) | Revisar | Estado |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for i, result in enumerate(results, start=1):
         lines.append(f"| {i} | {_render_row(result)} |")
@@ -141,12 +141,13 @@ def _render_detalle_table(results: list[PairResult]) -> list[str]:
 def _render_row(result: PairResult) -> str:
     direccion = f"{result.initiator} → {result.responder}"
     medida = f"{result.distance_measured_m:.3f}" if result.distance_measured_m is not None else "—"
+    desviacion = f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "—"
     diff_m = f"{result.diff_m:+.3f}" if result.diff_m is not None else "—"
     diff_pct = f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "—"
     revisar = "⚠️ Sí" if result.necesita_revision else "—"
     icono = _ESTADO_ICONO[result.estado]
     return (
-        f"{direccion} | {result.distance_calc_m:.3f} | {medida} | "
+        f"{direccion} | {result.distance_calc_m:.3f} | {medida} | {desviacion} | "
         f"{diff_m} | {diff_pct} | {revisar} | {icono} {result.estado}"
     )
 
