@@ -63,10 +63,10 @@ BLE) y un `FAIL` marcado "a revisar" (la diferencia supera el umbral de
 
 ## Detalle de mediciones
 
-| # | Dirección | Distancia calculada (m) | Distancia medida (m) | Diferencia (m) | Diferencia (%) | Revisar | Estado |
-|---|---|---|---|---|---|---|---|
-| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | +2.873 | +485.7% | ⚠️ Sí | ⚠️ FAIL |
-| 2 | UWB-Node-11 → UWB-Node-10 | 0.592 | — | — | — | — | ❌ ERROR |
+| # | Dirección | Distancia calculada (m) | Distancia medida (m) | Desviación (cm) | Diferencia (m) | Diferencia (%) | Revisar | Estado |
+|---|---|---|---|---|---|---|---|---|
+| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 2.1 | +2.873 | +485.7% | ⚠️ Sí | ⚠️ FAIL |
+| 2 | UWB-Node-11 → UWB-Node-10 | 0.592 | — | — | — | — | — | ❌ ERROR |
 
 ## Mediciones que requieren revisión
 
@@ -108,7 +108,8 @@ termina en la tabla de detalle.
       "n_samples_success": 15,
       "n_samples_requested": 15,
       "estado": "FAIL",
-      "detalle": null
+      "detalle": null,
+      "std_measured_cm": 2.1
     },
     {
       "initiator": "UWB-Node-11",
@@ -121,7 +122,8 @@ termina en la tabla de detalle.
       "n_samples_success": 0,
       "n_samples_requested": 15,
       "estado": "ERROR",
-      "detalle": ""
+      "detalle": "",
+      "std_measured_cm": null
     }
   ]
 }
@@ -156,6 +158,7 @@ Campos de cada entrada de `resultados` (`PairResult`, ver
 | `n_samples_requested` | int | Cuántas se pidieron (`--samples`). |
 | `estado` | `"PASS"` \| `"FAIL"` \| `"ERROR"` | Ver sección 5. |
 | `detalle` | string \| null | Mensaje de error si hubo una falla real (conexión, timeout, excepción) — `null` si la única "falla" fue estar fuera de tolerancia o del umbral de revisión. |
+| `std_measured_cm` | float \| null | Desviación estándar (poblacional) de las muestras `SUCCESS` de esa dirección, en cm. Mide la dispersión **entre las propias muestras**, algo distinto de `diff_m`/`diff_pct` (que comparan el *promedio* contra lo calculado) — ver sección 6. `null` si `estado="ERROR"`. |
 
 ## 5. Cómo se calculan `estado` y `necesita_revision`
 
@@ -195,3 +198,30 @@ de interpretar un `FAIL` como "el enlace UWB anda mal", revisar
 `n_samples_success`/`n_samples_requested` de esa fila: si son iguales (o
 casi), el problema más probable es que `posicion` no esté actualizado,
 no la medición.
+
+## 7. `diff_m` vs. `std_measured_cm`: dos preguntas distintas
+
+`diff_m`/`diff_pct` comparan el **promedio** de las muestras contra la
+distancia calculada — responden "¿la posición declarada es correcta?".
+`std_measured_cm` (columna "Desviación (cm)" en el Markdown) mide qué tan
+dispersas están las muestras **entre sí** — responde "¿la medición en sí
+es confiable, o el promedio salió de valores erráticos?". Son
+independientes: dos direcciones pueden tener el mismo `diff_m` con
+lecturas muy distintas de fondo:
+
+- **`diff_m` grande, `std_measured_cm` chico (pocos cm):** las muestras
+  son consistentes entre sí, solo que lejos de lo calculado — típicamente
+  `posicion` desactualizada en el TOML (ver sección 6), no un problema de
+  medición.
+- **`diff_m` chico, `std_measured_cm` grande:** el promedio cayó cerca de
+  lo calculado, pero de casualidad — las muestras individuales están muy
+  dispersas (multipath severo, interferencia, nodo mal ubicado
+  físicamente). Vale la pena desconfiar de esta fila aunque el `estado`
+  diga `PASS`.
+- **Ambos chicos:** el caso ideal — medición confiable y consistente con
+  la posición declarada.
+
+Como referencia, `docs/protocolo-ble-qorvo.md` documenta una desviación
+típica de ~2 cm contra hardware real en condiciones normales; una
+desviación de varios cm o más en una fila puntual es señal de revisarla,
+aunque su `diff_m` esté dentro de tolerancia.

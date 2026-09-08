@@ -35,6 +35,16 @@ class PairResult:
     mensaje de `MeasuredPair.error` cuando la medicion fallo del todo
     (`estado="ERROR"`), para que el reporte pueda mostrar por que sin
     tener que recorrer los `MeasuredPair` originales por separado.
+
+    `std_measured_cm` es la desviacion estandar (poblacional) de las
+    muestras `distance_cm_samples` de esa direccion — dispersion entre
+    las propias muestras, no confundir con `diff_m`/`diff_pct` (que
+    comparan el *promedio* medido contra la distancia calculada). Dos
+    direcciones pueden tener el mismo `diff_m` con dispersion muy
+    distinta: una con todas las muestras muy juntas (confiable aunque
+    este lejos de lo calculado) y otra con muestras muy dispersas
+    (sospechosa aunque el promedio de casualidad caiga cerca). `None`
+    si no se junto ninguna muestra (`estado="ERROR"`).
     """
 
     initiator: str
@@ -48,3 +58,4 @@ class PairResult:
     n_samples_requested: int
     estado: Estado
     detalle: str | None = None
+    std_measured_cm: float | None = None

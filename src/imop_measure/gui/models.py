@@ -15,6 +15,7 @@ _HEADERS = (
     "Respondedor",
     "Calculada (m)",
     "Medida (m)",
+    "Desviación (cm)",
     "Diferencia (m)",
     "Diferencia (%)",
     "Revisar",
@@ -94,11 +95,13 @@ def _display_value(result: PairResult, column: int) -> str | None:
             return "-"
         return f"{result.distance_measured_m:.3f}"
     if column == 4:
-        return f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
+        return f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
     if column == 5:
-        return f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
+        return f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
     if column == 6:
-        return "Si" if result.necesita_revision else "-"
+        return f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
     if column == 7:
+        return "Si" if result.necesita_revision else "-"
+    if column == 8:
         return result.estado
     return None

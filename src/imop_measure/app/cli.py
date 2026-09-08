@@ -122,6 +122,7 @@ def _print_summary(results: list[PairResult]) -> None:
     table.add_column("Dirección")
     table.add_column("Calculada (m)", justify="right")
     table.add_column("Medida (m)", justify="right")
+    table.add_column("Desviación (cm)", justify="right")
     table.add_column("Diferencia (m)", justify="right")
     table.add_column("Diferencia (%)", justify="right")
     table.add_column("Revisar")
@@ -130,6 +131,7 @@ def _print_summary(results: list[PairResult]) -> None:
         medida = (
             f"{result.distance_measured_m:.3f}" if result.distance_measured_m is not None else "-"
         )
+        desviacion = f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
         diff_m = f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
         diff_pct = f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
         revisar = "[bold red]SI[/bold red]" if result.necesita_revision else "-"
@@ -138,6 +140,7 @@ def _print_summary(results: list[PairResult]) -> None:
             f"{result.initiator} -> {result.responder}",
             f"{result.distance_calc_m:.3f}",
             medida,
+            desviacion,
             diff_m,
             diff_pct,
             revisar,
