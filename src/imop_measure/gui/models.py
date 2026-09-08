@@ -22,6 +22,32 @@ _HEADERS = (
     "Estado",
 )
 
+# Se muestran como tooltip al dejar el mouse sobre el header de la
+# columna (ver `headerData`, Qt.ItemDataRole.ToolTipRole — comportamiento
+# nativo de QHeaderView, no requiere wiring extra en gui/main_window.py).
+# Mismo texto que docs/formato-reporte.md secciones 4 y 7.
+_HEADER_TOOLTIPS = (
+    "Nodo que actuó como iniciador (INITF) en esta dirección.",
+    "Nodo que actuó como respondedor (RESPF) en esta dirección.",
+    "Distancia geométrica calculada a partir de las posiciones (posicion) "
+    "declaradas en el archivo de ambiente. Igual en ambas direcciones de un "
+    "mismo par de nodos.",
+    "Promedio de las muestras SUCCESS medidas por UWB en esta dirección.",
+    "Desviación estándar de las muestras individuales entre sí (dispersión) — "
+    "NO es la diferencia contra la distancia calculada. Un valor chico indica "
+    "una medición consistente, aunque esté lejos de lo calculado; un valor "
+    "grande indica que las muestras individuales variaron mucho entre sí, "
+    "aunque el promedio haya caído cerca de lo calculado por casualidad.",
+    "Distancia medida menos distancia calculada, con signo (positivo = se "
+    "midió más lejos de lo calculado).",
+    "La diferencia anterior como porcentaje de la distancia calculada.",
+    "Marca las direcciones cuya diferencia supera el umbral de revisión "
+    "(--review-threshold-cm) — probablemente un error de datos (nodo "
+    "equivocado, posición mal tipeada), no ruido normal de multipath.",
+    "PASS si la diferencia está dentro de la tolerancia (--tolerance-cm), "
+    "FAIL si la supera, ERROR si no se pudo medir (0 muestras SUCCESS).",
+)
+
 _ESTADO_COLOR = {
     "PASS": QColor("#2e7d32"),
     "FAIL": QColor("#b26a00"),
@@ -64,9 +90,13 @@ class CampaignResultsModel(QAbstractTableModel):
         orientation: Qt.Orientation,
         role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
-        if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
+        if orientation != Qt.Orientation.Horizontal:
             return None
-        return _HEADERS[section]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return _HEADERS[section]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return _HEADER_TOOLTIPS[section]
+        return None
 
     def data(
         self,

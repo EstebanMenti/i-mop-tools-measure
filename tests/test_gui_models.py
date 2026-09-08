@@ -103,3 +103,29 @@ def test_header_data(qtbot: object) -> None:
     assert model.headerData(0, Qt.Orientation.Horizontal) == "Iniciador"
     assert model.headerData(4, Qt.Orientation.Horizontal) == "Desviación (cm)"
     assert model.headerData(8, Qt.Orientation.Horizontal) == "Estado"
+
+
+def test_header_tooltip_explains_std_measured_column(qtbot: object) -> None:
+    model = CampaignResultsModel()
+
+    tooltip = model.headerData(4, Qt.Orientation.Horizontal, role=Qt.ItemDataRole.ToolTipRole)
+
+    assert "dispersión" in tooltip
+    assert "NO es la diferencia" in tooltip
+
+
+def test_header_tooltip_present_for_every_column(qtbot: object) -> None:
+    model = CampaignResultsModel()
+
+    for column in range(model.columnCount()):
+        tooltip = model.headerData(
+            column, Qt.Orientation.Horizontal, role=Qt.ItemDataRole.ToolTipRole
+        )
+        assert tooltip, f"columna {column} sin tooltip"
+
+
+def test_header_data_returns_none_for_vertical_orientation(qtbot: object) -> None:
+    model = CampaignResultsModel()
+
+    assert model.headerData(0, Qt.Orientation.Vertical) is None
+    assert model.headerData(0, Qt.Orientation.Vertical, role=Qt.ItemDataRole.ToolTipRole) is None
