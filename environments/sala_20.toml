@@ -55,6 +55,14 @@ uwb_addr        = "00:03"               # TODO: short address UWB real del nodo 
 posicion        = [0.03, 1.03, 0.26]    # TODO: posicion real del nodo 1
 tiempo_prendido = "120s"
 
+[[anchors]]
+key             = "uwb_node_2"
+nombre          = "UWB-Node-2"
+mac             = "FE:79:A2:F3:52:B9"
+uwb_addr        = "00:04"               # TODO: short address UWB real del nodo 2
+posicion        = [1.03, 0.03, 0.26]    # TODO: posicion real del nodo 2
+tiempo_prendido = "120s"
+
 
 # ---------------------------------------------------------------------------
 # Timeouts BLE para esta sala (opcional - se usan defaults si se omite)
