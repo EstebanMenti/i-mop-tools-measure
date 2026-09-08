@@ -120,6 +120,25 @@ iniciador empiece a transmitir antes de que el respondedor esté escuchando.
 > físicos (`uwb_node_10`/`uwb_node_11` de `environments/sala_20.toml`) vía
 > `ranging.pair_runner.run_pair`, sin intervención manual.
 
+### 3.1 `STAT` periódico al respondedor durante una sesión `RESPF` activa
+
+Mientras se juntan muestras del lado del iniciador, el enlace BLE del
+respondedor no recibe tráfico propio (ver sección 7) y se desconecta solo
+por el timeout de inactividad de ~7-8s. `ranging.pair_runner` (función
+`_keep_responder_alive`) manda un `STAT` al respondedor cada 5s durante
+el muestreo, bien por debajo de ese umbral, para mantener el enlace vivo
+sin tocar la app `RESPF` en curso.
+
+> **[Verificado 2026-09-08 contra hardware real]:** consultar `STAT` (una
+> consulta de solo lectura) mientras `RESPF` está activo **no interrumpe
+> ni degrada** la sesión de ranging en curso — se corrieron 3 campañas
+> completas contra los 4 nodos reales de `environments/sala_20.toml` (12
+> direcciones cada una) con este keepalive activo: 30/30 muestras
+> `SUCCESS` en las 36 mediciones totales, cero errores de conexión. Antes
+> de este keepalive, el enlace del respondedor se desconectaba solo
+> durante el muestreo y 2 de 6 direcciones terminaban en `0/30 SUCCESS`
+> (ver `reports/medicion-20-20260908-084928.md`).
+
 ## 4. Lectura de la distancia medida
 
 La distancia llega como notificación asíncrona. La documentación original
@@ -190,6 +209,14 @@ Confirmado dos veces contra hardware real en este proyecto:
 Ambos son más probables cuanto más seguido se conecta/desconecta el mismo
 adaptador Bluetooth en poco tiempo (exactamente lo que hace este proyecto
 al medir varios nodos).
+
+Además, la conexión BLE al puente se cierra **sola** ~7-8s después de la
+última actividad — comportamiento normal del puente, no una falla. Por
+eso `BleTransport.write_line` reconecta automáticamente si hace falta
+(`_ensure_connected`, ver `transport/ble_link.py`), y por eso
+`ranging.pair_runner` manda un `STAT` periódico al respondedor durante el
+muestreo (ver sección 3.1) — su enlace, si no, queda sin tráfico propio
+el tiempo suficiente como para caerse solo.
 
 **Mitigación implementada:** `imop_measure.transport.ble_link.BleTransport`
 reintenta la conexión (`_connect_with_retry`, con un cliente `bleak`

@@ -68,10 +68,16 @@ tiempo_prendido = "120s"
 # Timeouts BLE para esta sala (opcional - se usan defaults si se omite)
 # ---------------------------------------------------------------------------
 [ble_timeouts]
+# --- Campos leidos por el codigo hoy (ranging/pair_runner.py) ---------------
 # Segundos TOTALES para conectar a cada nodo, incluyendo reintentos (Bleak/BlueZ)
 connection_timeout = 180.0
 # Segundos de espera de ACK al mandar "uwb on"/"uwb off"
 command_timeout = 5.0
+# Timeout de respuesta completa de los comandos `qorvo <cmd>` (>= límite duro de 8s del puente)
+qorvo_command_timeout = 10.0
+
+# --- Reservados, todavia NO implementados (ver docs/formato-ambiente-toml.md
+# seccion 2) -- cambiarlos hoy no tiene ningun efecto en el codigo actual ---
 # Espera fija tras conectar, antes de chequear el MTU negociado
 mtu_negotiation_wait = 5.0
 # Segundos entre reintentos de negociación de MTU
@@ -87,5 +93,3 @@ max_concurrent_connections = 5
 # Patrulla round-robin de monitoreo (batería + qorvo STAT) por nodo, en segundos.
 # 0 desactiva el monitoreo.
 monitor_interval = 60.0
-# Timeout de respuesta completa de los comandos `qorvo <cmd>` (>= límite duro de 8s del puente)
-qorvo_command_timeout = 10.0
