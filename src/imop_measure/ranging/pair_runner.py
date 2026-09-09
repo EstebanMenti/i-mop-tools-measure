@@ -54,11 +54,13 @@ _RESPONDER_KEEPALIVE_INTERVAL_S = 5.0
 # MISMO dispositivo puede entonces fallar con un error de WinRT no
 # relacionado (`[WinError -2147023673] El usuario ha cancelado la
 # operacion`), porque el stack BLE de Windows todavia ve una sesion GATT a
-# medio cerrar hacia esa direccion. `open_initiator` ahora cierra siempre el
-# transporte fallido antes de reintentar (nunca reusa uno a medio abrir) y
-# reintenta con un backoff corto para darle tiempo al stack de asentarse.
-_OPEN_INITIATOR_RETRY_ATTEMPTS = 2
-_OPEN_INITIATOR_RETRY_BACKOFF_S = 3.0
+# medio cerrar hacia esa direccion. `_open_and_confirm_none` (usada tanto
+# para conectar al iniciador como al respondedor, ver `open_initiator` y
+# `run_directed_measurement`) cierra siempre el transporte fallido antes de
+# reintentar (nunca reusa uno a medio abrir) y reintenta con un backoff
+# corto para darle tiempo al stack de asentarse.
+_OPEN_RETRY_ATTEMPTS = 2
+_OPEN_RETRY_BACKOFF_S = 3.0
 
 _TransportFactory = Callable[[str], BleTransport]
 
@@ -107,15 +109,19 @@ class InitiatorHandle:
     client: DwmCliClient
 
 
-def open_initiator(
-    initiator: Anchor,
+def _open_and_confirm_none(
+    make_transport: _TransportFactory,
+    address: str,
     *,
-    ble_timeouts: Mapping[str, float],
-    _transport_factory: _TransportFactory | None = None,
-) -> InitiatorHandle:
-    """Conecta `initiator` y lo deja en modo `NONE`, listo para medir
-    contra varios respondedores en secuencia sin reconectar (ver
-    `run_directed_measurement`).
+    command_timeout_s: float,
+    label: str,
+) -> tuple[BleTransport, DwmCliClient]:
+    """Conecta `address` (`transport.open()`) y confirma modo `NONE`
+    (`ensure_mode_none()`), reintentando ante una falla transitoria (ver
+    `_OPEN_RETRY_ATTEMPTS`). Usada tanto para el iniciador
+    (`open_initiator`) como para el respondedor de cada direccion
+    (`run_directed_measurement`) — la misma flakiness de conexion BLE
+    transitoria afecta a ambos roles por igual.
 
     Nunca deja un transporte a medio abrir: ante cualquier falla lo cierra
     antes de reintentar o propagar — apagando el modulo Qorvo primero
@@ -123,22 +129,17 @@ def open_initiator(
     la propia conexion fallo, no hay nada que apagar: forzar un apagado ahi
     dispararia una reconexion inmediata y sin backoff dentro de
     `_safe_power_off`, justo el apuro que puede volver a fallar contra un
-    dispositivo que recien se desconecto). Reintenta hasta
-    `_OPEN_INITIATOR_RETRY_ATTEMPTS` veces con un transporte nuevo en cada
-    intento (ver esa constante) — una falla de conexion transitoria no debe
-    descartar de entrada las direcciones de todo un nodo (ver
-    `ranging/campaign.py`).
+    dispositivo que recien se desconecto).
+
+    `label` es solo para el log de reintento (nombre del ancla).
 
     Raises:
         MeasureError: si ningun intento logro conectar o confirmar modo
             `NONE`.
     """
-    make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
-    command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
-
     last_error: MeasureError | None = None
-    for attempt in range(1, _OPEN_INITIATOR_RETRY_ATTEMPTS + 1):
-        transport = make_transport(initiator.mac)
+    for attempt in range(1, _OPEN_RETRY_ATTEMPTS + 1):
+        transport = make_transport(address)
         client = DwmCliClient(
             transport, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
         )
@@ -150,22 +151,48 @@ def open_initiator(
         else:
             try:
                 client.ensure_mode_none()
-                return InitiatorHandle(anchor=initiator, transport=transport, client=client)
+                return transport, client
             except MeasureError as exc:
                 last_error = exc
                 _safe_power_off(transport)
                 transport.close()
-        if attempt < _OPEN_INITIATOR_RETRY_ATTEMPTS:
+        if attempt < _OPEN_RETRY_ATTEMPTS:
             logger.warning(
-                "%s: fallo al conectar como iniciador (intento %d/%d): %s",
-                initiator.nombre,
+                "%s: fallo al conectar (intento %d/%d): %s",
+                label,
                 attempt,
-                _OPEN_INITIATOR_RETRY_ATTEMPTS,
+                _OPEN_RETRY_ATTEMPTS,
                 last_error,
             )
-            time.sleep(_OPEN_INITIATOR_RETRY_BACKOFF_S)
+            time.sleep(_OPEN_RETRY_BACKOFF_S)
     assert last_error is not None  # el loop corrio al menos una vez
     raise last_error
+
+
+def open_initiator(
+    initiator: Anchor,
+    *,
+    ble_timeouts: Mapping[str, float],
+    _transport_factory: _TransportFactory | None = None,
+) -> InitiatorHandle:
+    """Conecta `initiator` y lo deja en modo `NONE`, listo para medir
+    contra varios respondedores en secuencia sin reconectar (ver
+    `run_directed_measurement`).
+
+    Reintenta ante una falla de conexion transitoria (ver
+    `_open_and_confirm_none`) — no debe descartar de entrada las
+    direcciones de todo un nodo (ver `ranging/campaign.py`).
+
+    Raises:
+        MeasureError: si ningun intento logro conectar o confirmar modo
+            `NONE`.
+    """
+    make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
+    command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
+    transport, client = _open_and_confirm_none(
+        make_transport, initiator.mac, command_timeout_s=command_timeout_s, label=initiator.nombre
+    )
+    return InitiatorHandle(anchor=initiator, transport=transport, client=client)
 
 
 def close_initiator(handle: InitiatorHandle) -> None:
@@ -202,25 +229,26 @@ def run_directed_measurement(
     direccion fallida no aborte el resto de las mediciones del grupo (ver
     `ranging/campaign.py`) — incluida una falla transitoria del propio
     iniciador ya conectado, que se reintenta de forma transparente en el
-    siguiente comando (ver transport/ble_link.py `_ensure_connected`).
+    siguiente comando (ver transport/ble_link.py `_ensure_connected`). La
+    conexion del respondedor reintenta ante una falla transitoria (ver
+    `_open_and_confirm_none`), igual que `open_initiator`.
     """
     initiator = initiator_handle.anchor
     client_init = initiator_handle.client
 
     make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
-    transport_resp = make_transport(responder.mac)
     command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
-    client_resp = DwmCliClient(
-        transport_resp, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
-    )
 
-    connected_resp = False
+    transport_resp: BleTransport | None = None
     successes: list[int] = []
     try:
-        transport_resp.open()  # conecta + "qorvo on" + settle
-        connected_resp = True
+        transport_resp, client_resp = _open_and_confirm_none(
+            make_transport,
+            responder.mac,
+            command_timeout_s=command_timeout_s,
+            label=responder.nombre,
+        )
 
-        client_resp.ensure_mode_none()
         # El iniciador ya esta en NONE por open_initiator() o por el
         # _stop_quietly() de la direccion anterior del grupo, pero se
         # reconfirma aca (barato, un STOP+STAT): si el STOP anterior fallo
@@ -258,9 +286,9 @@ def run_directed_measurement(
         )
         return _build_result(initiator, responder, successes, n_samples, str(exc))
     finally:
-        if connected_resp:
+        if transport_resp is not None:
             _safe_power_off(transport_resp)
-        transport_resp.close()
+            transport_resp.close()
 
 
 def run_pair(
