@@ -7,7 +7,7 @@ import pytest
 from imop_measure.config.loader import load_ambiente
 from imop_measure.errors import ConfigError
 
-ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent / "environments"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 _VALID_TOML = """
 [sala]
@@ -31,21 +31,26 @@ tiempo_prendido = "60s"
 """
 
 
-def test_load_sala_20_real() -> None:
-    ambiente = load_ambiente(ENVIRONMENTS_DIR / "sala_20.toml")
+def test_load_ambiente_ejemplo_real() -> None:
+    """Parsea `tests/fixtures/sala_ejemplo.toml`, un ambiente "real" fijo
+    (formato completo: dimensiones, anclas, ble_timeouts) — a diferencia de
+    `environments/sala_20.toml`, que es un archivo de trabajo que se edita
+    sesion a sesion segun que nodos fisicos esten disponibles, este fixture
+    nunca cambia, para que este test no dependa del ambiente de turno.
+    """
+    ambiente = load_ambiente(FIXTURES_DIR / "sala_ejemplo.toml")
 
-    assert ambiente.id == "20"
+    assert ambiente.id == "ejemplo"
     assert {anchor.key for anchor in ambiente.anchors} == {
+        "uwb_node_8",
         "uwb_node_10",
         "uwb_node_11",
-        "uwb_node_1",
-        "uwb_node_2",
     }
-    assert len(ambiente.anchors) == 4
+    assert len(ambiente.anchors) == 3
 
     node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
-    assert node_11.posicion == pytest.approx((0.03, 0.03, 0.26))
-    assert node_11.uwb_addr == "00:02"
+    assert node_11.posicion == pytest.approx((0.0, 2.0, 0.0))
+    assert node_11.uwb_addr == "00:11"
     assert node_11.mac == "E5:A2:2C:DB:14:B9"
 
     assert ambiente.ble_timeouts["connection_timeout"] == pytest.approx(180.0)

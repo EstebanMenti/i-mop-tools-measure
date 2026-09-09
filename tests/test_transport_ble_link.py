@@ -10,8 +10,10 @@ automatica) para no reintroducirlos al portar el codigo.
 from collections.abc import Callable
 
 import pytest
+from bleak.exc import BleakError
 
 from imop_measure.errors import TransportError
+from imop_measure.transport import ble_link as ble_link_module
 from imop_measure.transport.ble_link import BleTransport
 from tests.fakes import FakeBleakClient
 
@@ -27,9 +29,16 @@ def make_transport(
     client = fake_client or FakeBleakClient(ADDRESS)
 
     def factory(
-        address: str, disconnected_callback: Callable[[object], None] | None = None
+        address: str,
+        disconnected_callback: Callable[[object], None] | None = None,
+        services: object = None,
+        *,
+        winrt: dict[str, object] | None = None,
+        **_kwargs: object,
     ) -> FakeBleakClient:
         client._disconnected_callback = disconnected_callback
+        client.requested_services = list(services) if services is not None else None  # type: ignore[arg-type]
+        client.winrt_args = dict(winrt or {})
         return client
 
     transport = BleTransport(
@@ -212,3 +221,129 @@ class TestConnectRetry:
 
         with pytest.raises(TransportError, match="error BLE"):
             transport.open()
+
+
+class TestServiceCache:
+    """Descubrimiento GATT acotado a los servicios usados + cache de
+    servicios de Windows en el primer intento de conexion (portado del
+    repo hermano, commit 125568b)."""
+
+    def test_first_connect_requests_scoped_service_and_cache(self) -> None:
+        # [Mitigacion 2026-09-09] Reduce el tiempo muerto de una reconexion:
+        # limitar el descubrimiento a los servicios usados (NUS + streaming)
+        # y pedirle a Windows que reuse su cache de servicios ya conocido.
+        transport, client = make_transport()
+
+        with transport:
+            assert client.requested_services == [
+                ble_link_module.NUS_SERVICE_UUID,
+                ble_link_module.STREAM_SERVICE_UUID,
+            ]
+            assert client.winrt_args == {"use_cached_services": True}
+
+    def test_connect_falls_back_to_uncached_services_after_failure(self) -> None:
+        # Si el camino rapido (cache de servicios de Windows) falla, la
+        # conexion igual debe completarse — prefiriendo una reconexion mas
+        # lenta (sin cache, redescubriendo todo el GATT) a que la
+        # optimizacion bloquee el proceso.
+        calls: list[FakeBleakClient] = []
+
+        class FailsWithCachedServices(FakeBleakClient):
+            async def connect(self) -> None:
+                if self.winrt_args.get("use_cached_services"):
+                    raise BleakError("fake: cache de servicios desactualizado")
+                await super().connect()
+
+        def factory(
+            address: str,
+            disconnected_callback: Callable[[object], None] | None = None,
+            **kwargs: object,
+        ) -> FakeBleakClient:
+            client = FailsWithCachedServices(address, **kwargs)  # type: ignore[arg-type]
+            client._disconnected_callback = disconnected_callback
+            calls.append(client)
+            return client
+
+        transport = BleTransport(
+            ADDRESS,
+            power_on_settle_s=0.0,
+            power_drain_s=0.05,
+            connect_timeout_s=5.0,
+            _client_factory=factory,
+        )
+        with transport:
+            assert transport._client is calls[-1]
+            assert calls[-1].is_connected
+
+        # El primer intento pidio cache y fallo; el siguiente lo desactivo y
+        # conecto con exito — el proceso termino conectando, no se bloqueo.
+        assert len(calls) >= 2
+        assert calls[0].winrt_args == {"use_cached_services": True}
+        assert calls[-1].winrt_args == {"use_cached_services": False}
+
+
+class TestStreaming:
+    """Canal BLE dedicado de streaming (`STREAM_SERVICE_UUID` /
+    `STREAM_DATA_CHAR_UUID`), separado del canal de comandos (NUS TX) —
+    ver comentario junto a `STREAM_SERVICE_UUID` en `ble_link.py` para el
+    motivo (el canal de comandos suspendia el UART tras 8s de ranging
+    continuo, sin este canal dedicado)."""
+
+    def test_open_subscribes_to_stream_and_enables_it(self) -> None:
+        transport, client = make_transport()
+
+        with transport:
+            assert ble_link_module.STREAM_DATA_CHAR_UUID in client._notify_callbacks
+            assert b"qorvo stream on\n" in client.sent
+
+    def test_read_notification_line_reads_from_dedicated_stream_channel(self) -> None:
+        transport, client = make_transport()
+
+        with transport:
+            client.simulate_stream_data(
+                b"SESSION_INFO_NTF: {session_handle=1, sequence_number=0, block_index=0,"
+                b' n_measurements=1 [mac_address=0x0001, status="SUCCESS", distance[cm]=200]}\r\n'
+            )
+            assert transport.read_notification_line(0.2) == (
+                "SESSION_INFO_NTF: {session_handle=1, sequence_number=0, block_index=0,"
+                ' n_measurements=1 [mac_address=0x0001, status="SUCCESS", distance[cm]=200]}'
+            )
+
+    def test_stream_data_never_reaches_command_channel(self) -> None:
+        # El motivo de tener dos colas separadas: un STAT de keepalive
+        # durante el muestreo no debe comerse (ni contaminarse con)
+        # notificaciones de ranging en curso, y viceversa.
+        transport, client = make_transport()
+
+        with transport:
+            client.simulate_stream_data(b"SESSION_INFO_NTF: {algo}\r\n")
+            assert transport.read_line(0.2) is None
+            assert transport.read_notification_line(0.2) == "SESSION_INFO_NTF: {algo}"
+
+    def test_command_response_never_reaches_stream_channel(self) -> None:
+        fake = FakeBleakClient(ADDRESS, script={"STAT": [b"mode: NONE\r\nok\r\n"]})
+        transport, _ = make_transport(fake)
+
+        with transport:
+            transport.write_line("STAT")
+            assert transport.read_line(0.2) == "mode: NONE"
+            assert transport.read_notification_line(0.1) is None
+
+    def test_reenables_stream_after_automatic_reconnect(self) -> None:
+        # [Bug real, 2026-09-09, hardware real, repo hermano] El streaming se
+        # apaga solo al desconectarse el BLE (a diferencia del encendido
+        # fisico del Qorvo, que es un GPIO persistente). Antes de este fix,
+        # una reconexion automatica (p. ej. el timeout de inactividad de
+        # ~7-8s cayendo justo antes de arrancar el ranging) dejaba el
+        # streaming apagado sin que nada lo notara: "0 notificaciones
+        # recibidas en 100s" con el enlace BLE sano el resto del tiempo.
+        fake = FakeBleakClient(ADDRESS)
+        transport, client = make_transport(fake)
+
+        with transport:
+            stream_on_before = client.sent.count(b"qorvo stream on\n")
+            client.simulate_disconnect()
+
+            transport.write_line("STAT")  # dispara la reconexion automatica
+
+            assert client.sent.count(b"qorvo stream on\n") == stream_on_before + 1

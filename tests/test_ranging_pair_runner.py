@@ -107,7 +107,9 @@ def _make_factory(
         fake = fakes[address]
 
         def client_factory(
-            addr: str, disconnected_callback: Callable[[object], None] | None = None
+            addr: str,
+            disconnected_callback: Callable[[object], None] | None = None,
+            **kwargs: object,
         ) -> FakeBleakClient:
             fake._disconnected_callback = disconnected_callback
             return fake
@@ -131,7 +133,9 @@ def _make_factory_multi(fakes: dict[str, FakeBleakClient]) -> Callable[[str], Bl
         fake = fakes[address]
 
         def client_factory(
-            addr: str, disconnected_callback: Callable[[object], None] | None = None
+            addr: str,
+            disconnected_callback: Callable[[object], None] | None = None,
+            **kwargs: object,
         ) -> FakeBleakClient:
             fake._disconnected_callback = disconnected_callback
             return fake
@@ -316,6 +320,57 @@ def test_run_pair_initiator_connect_failure_marks_error_without_raising() -> Non
     assert result.n_success == 0
     # Si el propio iniciador no conecta, el respondedor ni se intenta.
     assert fake_a.connect_attempts == 0
+
+
+def test_open_initiator_retries_after_transient_connect_failure() -> None:
+    """[Verificado 2026-09-09, hardware real] Una falla de conexion
+    transitoria al abrir el iniciador (ver `pair_runner._OPEN_RETRY_ATTEMPTS`)
+    no debe descartar de entrada las direcciones de todo el nodo: el primer
+    intento falla, se cierra ese transporte y se reintenta con uno nuevo,
+    que esta vez conecta bien.
+    """
+    _, script_b = _base_scripts()
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b, fail_connect_times=1)
+
+    handle = open_initiator(
+        ANCHOR_B,
+        ble_timeouts={},
+        _transport_factory=_make_factory(FakeBleakClient(ANCHOR_A.mac), fake_b),
+    )
+    try:
+        assert fake_b.connect_attempts == 2
+        assert fake_b.is_connected is True
+    finally:
+        close_initiator(handle)
+
+
+def test_run_directed_measurement_retries_responder_after_transient_connect_failure() -> None:
+    """Mismo criterio que `test_open_initiator_retries_after_transient_connect_failure`,
+    pero para la conexion del respondedor (ver `pair_runner._open_and_confirm_none`,
+    usada por ambos roles) — reproduce el caso real de
+    reports/medicion-20-20260909-160954.md, donde varios respondedores
+    disponibles (confirmado porque midieron bien en otras direcciones de la
+    misma campaña) fallaron una vez de forma transitoria y quedaban en
+    `ERROR` sin reintentar.
+    """
+    script_a, script_b = _base_scripts()
+    script_a[RESPF_COMMAND] = [b"ok\r\n"]
+    script_b[INITF_COMMAND] = [b"ok\r\n", *_ntf_fragments(0, distance_cm=200)]
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a, fail_connect_times=1)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+
+    result = run_pair(
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=_make_factory(fake_a, fake_b),
+    )
+
+    assert result.error is None
+    assert result.n_success == 1
+    assert fake_a.connect_attempts == 2
 
 
 def test_run_pair_handles_real_three_fragment_notification() -> None:

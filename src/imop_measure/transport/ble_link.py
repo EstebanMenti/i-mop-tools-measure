@@ -1,11 +1,15 @@
 """Transporte Bluetooth Low Energy: `BleTransport` sobre el puente nRF52840.
 
 Portado de `dwm3001c_cli.transport.ble_link` (repo hermano
-`i-mop-qorvo-CLI-script`, commit ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd),
-donde esta validado contra hardware real — ver docs/arquitectura.md
-decision D1. Cualquier bug de protocolo BLE que se descubra en el futuro
-en ese repo hermano debe portarse tambien aca a mano: este proyecto ya no
-depende de esa instalacion, es una copia adaptada e independiente.
+`i-mop-qorvo-CLI-script`, commit ad7079aab0d32b603b4f83ce8be9ac5ce49bd0bd,
+mas el canal de streaming dedicado de ese repo, commit
+125568b4f3a420c3f053d4d78157b1dcc5810d5b — requerido por el firmware del
+puente I-mop-nrf52840-fw >= 0.3.0, que agrego el servicio GATT "Qorvo
+Stream"), donde esta validado contra hardware real — ver
+docs/arquitectura.md decision D1. Cualquier bug de protocolo BLE que se
+descubra en el futuro en ese repo hermano debe portarse tambien aca a
+mano: este proyecto ya no depende de esa instalacion, es una copia
+adaptada e independiente.
 
 Implementa el contrato `Transport` (ver `transport/base.py`), asi que
 `core/client.py` lo usa sin ningun cambio.
@@ -54,6 +58,23 @@ logger = logging.getLogger(__name__)
 NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 NUS_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # PC -> nRF (write)
 NUS_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # nRF -> PC (notify)
+
+# [Firmware del puente >= 0.3.0, I-mop-nrf52840-fw] Servicio "Qorvo Stream"
+# (doc/00_BLE_Protocol_Specification.md §5.4/§7.7 del firmware): canal BLE
+# dedicado, solo Notify, para streaming continuo de SESSION_INFO_NTF durante
+# una sesion de ranging activa — reemplaza depender de NUS TX para esto.
+# Motivo: el canal de comandos shell-NUS (`qorvo <cmd>`) es
+# peticion/respuesta con una ventana acotada (silencio 400ms / timeout duro
+# 8000ms) y, al vencer esa ventana, el puente suspendia el UART hacia el
+# Qorvo incondicionalmente — con SESSION_INFO_NTF llegando cada ~200ms
+# durante el ranging, el silencio nunca se cumplia, asi que la ventana corria
+# siempre hasta los 8000ms y todo lo que el Qorvo transmitia despues se
+# perdia hasta el proximo comando (confirmado contra hardware real en el
+# repo hermano: rafagas de ~40 notificaciones y silencio total despues, sin
+# ninguna desconexion BLE de por medio). Activado con `enable_stream()`
+# (comando reservado `qorvo stream on`, igual mecanismo que `power_on()`).
+STREAM_SERVICE_UUID = "019dad38-2b03-4df9-ac87-70ce530540fb"
+STREAM_DATA_CHAR_UUID = "36a9a2d9-a035-440f-8e59-ff0a72b2ba51"  # nRF -> PC (notify)
 
 # Prompt del shell de Zephyr tras cada respuesta (ej. "bt_nus:~$ "); no es
 # contenido del Qorvo, hay que descartarlo antes de que lo vea DwmCliClient.
@@ -137,6 +158,8 @@ class BleTransport:
     NUS_SERVICE_UUID = NUS_SERVICE_UUID
     NUS_RX_CHAR_UUID = NUS_RX_CHAR_UUID
     NUS_TX_CHAR_UUID = NUS_TX_CHAR_UUID
+    STREAM_SERVICE_UUID = STREAM_SERVICE_UUID
+    STREAM_DATA_CHAR_UUID = STREAM_DATA_CHAR_UUID
 
     def __init__(
         self,
@@ -169,6 +192,12 @@ class BleTransport:
         self._thread: threading.Thread | None = None
         self._assembler = LineAssembler()
         self._rx_queue: queue.Queue[str] = queue.Queue()
+        # Canal separado para el streaming de ranging (caracteristica "Qorvo
+        # Stream Data"): nunca comparte cola con las respuestas de comando
+        # (_rx_queue), para que un STAT de keepalive no se coma (ni
+        # contamine) notificaciones SESSION_INFO_NTF en curso, ni viceversa.
+        self._stream_assembler = LineAssembler()
+        self._stream_queue: queue.Queue[str] = queue.Queue()
         self._pending_error: str | None = None
         # Copias planas de estado, actualizadas solo desde el hilo dedicado
         # de bleak (self._thread) — nunca leer self._client.is_connected/
@@ -187,7 +216,9 @@ class BleTransport:
     # ------------------------------------------------------------- ciclo de vida
 
     def open(self) -> None:
-        """Conecta, habilita notificaciones y enciende el modulo Qorvo (`qorvo on`)."""
+        """Conecta, habilita notificaciones, enciende el modulo Qorvo
+        (`qorvo on`) y activa el streaming continuo de ranging
+        (`qorvo stream on`, ver `enable_stream`)."""
         if self._thread is not None:
             return
         self._loop = asyncio.new_event_loop()
@@ -198,6 +229,9 @@ class BleTransport:
         self._run_coro(self._connect(), timeout_s=self._connect_timeout_s)
         self.power_on()
         time.sleep(self._power_on_settle_s)
+        # El Qorvo debe estar encendido antes de aceptar el comando (misma
+        # precondicion que cualquier otro `qorvo <cmd>`, ver power_on()).
+        self.enable_stream()
 
     def close(self) -> None:
         if self._loop is None:
@@ -258,7 +292,25 @@ class BleTransport:
         self._pending_error = None
 
     def read_line(self, timeout_s: float) -> str | None:
-        """Devuelve la proxima linea, o `None` si vencio `timeout_s`.
+        """Devuelve la proxima linea de respuesta de comando, o `None` si
+        vencio `timeout_s`. Ver `_read_from_queue`."""
+        return self._read_from_queue(self._rx_queue, timeout_s, what="respuesta")
+
+    def read_notification_line(self, timeout_s: float) -> str | None:
+        """Devuelve la proxima linea del canal de streaming BLE dedicado
+        (caracteristica "Qorvo Stream Data", ver `STREAM_DATA_CHAR_UUID` y
+        `enable_stream`), o `None` si vencio `timeout_s`. Ver
+        `_read_from_queue`.
+        """
+        return self._read_from_queue(self._stream_queue, timeout_s, what="datos de streaming")
+
+    def _read_from_queue(
+        self, source: queue.Queue[str], timeout_s: float, *, what: str
+    ) -> str | None:
+        """Logica de lectura compartida por `read_line` y
+        `read_notification_line`: cada una sobre su propia cola
+        (`_rx_queue`/`_stream_queue` — nunca se mezclan, ver comentario en
+        `__init__`).
 
         Sondea en pasos cortos (no un unico `queue.get` bloqueante) para
         poder detectar una desconexion o un timeout del puente mientras se
@@ -273,11 +325,11 @@ class BleTransport:
                 raise TransportError(f"{self.name}: {error}")
             remaining = deadline - time.monotonic()
             try:
-                return self._rx_queue.get(timeout=min(poll_s, max(0.0, remaining)))
+                return source.get(timeout=min(poll_s, max(0.0, remaining)))
             except queue.Empty:
                 pass
             if self._client is not None and not self._connected:
-                raise TransportError(f"{self.name}: conexion BLE perdida esperando respuesta")
+                raise TransportError(f"{self.name}: conexion BLE perdida esperando {what}")
             if time.monotonic() >= deadline:
                 return None
 
@@ -301,6 +353,32 @@ class BleTransport:
         text = "off" if hold_s is None else f"off -t {hold_s:g}s"
         self._ensure_connected()
         self._run_coro(self._send_raw(text), timeout_s=self._write_timeout_s)
+        self._drain_response()
+
+    def enable_stream(self) -> None:
+        """`qorvo stream on`: activa el streaming continuo de ranging por la
+        caracteristica dedicada (`STREAM_DATA_CHAR_UUID`, ver comentario
+        junto a esa constante).
+
+        Palabra reservada del firmware puente, igual mecanismo que
+        `power_on` (no pasa por `write_line`): la confirmacion
+        ("Qorvo streaming: ON") llega por el canal de comandos normal
+        (NUS TX), sin marcador `ok` — se drena igual que la de `power_on`.
+        """
+        self._ensure_connected()
+        self._run_coro(self._send_raw("stream on"), timeout_s=self._write_timeout_s)
+        self._drain_response()
+
+    def disable_stream(self) -> None:
+        """`qorvo stream off` (ver `enable_stream`).
+
+        No es obligatorio llamarlo antes de desconectar — el streaming se
+        apaga solo con la conexion BLE (ver doc del firmware puente) — pero
+        es buena practica hacerlo si se lo va a reactivar mas adelante sobre
+        la misma conexion.
+        """
+        self._ensure_connected()
+        self._run_coro(self._send_raw("stream off"), timeout_s=self._write_timeout_s)
         self._drain_response()
 
     def _drain_response(self, quiet_s: float | None = None) -> None:
@@ -359,10 +437,22 @@ class BleTransport:
         # aca es deliberado (ver docs/protocolo-ble-qorvo.md).
         logger.warning("%s: reconectando (conexion BLE inactiva o caida)", self.name)
         self._run_coro(self._connect(), timeout_s=self._connect_timeout_s)
+        # [Bug real, 2026-09-09, hardware real, repo hermano] El streaming
+        # (ver enable_stream()) se apaga solo al desconectarse el BLE — es
+        # estado de la conexion GATT, no algo persistente como el encendido
+        # fisico del Qorvo (power_on(), que es un GPIO y no hace falta
+        # reafirmar aca). Antes de este fix, una reconexion automatica
+        # (p. ej. el timeout de inactividad de ~7-8s cayendo justo antes de
+        # arrancar el ranging) dejaba el streaming apagado sin que nada lo
+        # notara: las notificaciones de esa sesion no llegaban por ningun
+        # canal — "0 notificaciones recibidas en 100s" con el enlace BLE
+        # sano el resto del tiempo.
+        self.enable_stream()
 
     async def _connect(self) -> None:
         client = await self._connect_with_retry()
         await client.start_notify(NUS_TX_CHAR_UUID, self._on_notify)
+        await client.start_notify(STREAM_DATA_CHAR_UUID, self._on_stream_notify)
         self._client = client
         self._connected = True
         self._mtu_size = client.mtu_size
@@ -378,20 +468,41 @@ class BleTransport:
         tipo puede dejar el objeto WinRT nativo en un estado invalido.
         """
         last_error: BleakError | OSError | None = None
+        # [Mitigacion 2026-09-09, repo hermano] Cada reconexion completa
+        # re-enumera todos los servicios/caracteristicas del puente por
+        # defecto — costo evitable, ya que solo se usan NUS y "Qorvo
+        # Stream". Se limita el descubrimiento a esos servicios y se le pide
+        # a Windows reusar su cache de servicios ya conocido
+        # (`use_cached_services`), lo que acelera la reconexion tras uno de
+        # los cortes espontaneos del puente. Riesgo: si el catalogo GATT del
+        # puente cambiara entre conexiones (p. ej. reflasheo de su firmware
+        # a mitad de sesion), el cache quedaria desactualizado y esa
+        # conexion fallaria. Por eso el cache es solo el camino rapido del
+        # primer intento: cualquier fallo lo desactiva para el resto de los
+        # intentos de esta llamada, priorizando terminar de conectar (mas
+        # lento, sin cache) por sobre la velocidad.
+        use_cached_services = True
         for attempt in range(1, self._connect_retry_attempts + 1):
-            client = self._client_factory(self._address, disconnected_callback=self._on_disconnect)
+            client = self._client_factory(
+                self._address,
+                disconnected_callback=self._on_disconnect,
+                services=[NUS_SERVICE_UUID, STREAM_SERVICE_UUID],
+                winrt={"use_cached_services": use_cached_services},
+            )
             try:
                 await client.connect()
                 return client
             except (BleakError, OSError) as exc:
                 last_error = exc
                 logger.warning(
-                    "%s: fallo de conexion BLE (intento %d/%d): %s",
+                    "%s: fallo de conexion BLE (intento %d/%d, cache de servicios=%s): %s",
                     self.name,
                     attempt,
                     self._connect_retry_attempts,
+                    use_cached_services,
                     exc,
                 )
+                use_cached_services = False
                 if attempt < self._connect_retry_attempts:
                     await asyncio.sleep(self._connect_retry_backoff_s)
         assert last_error is not None  # el loop corrio al menos una vez
@@ -403,6 +514,7 @@ class BleTransport:
         try:
             if self._connected:
                 await self._client.stop_notify(NUS_TX_CHAR_UUID)
+                await self._client.stop_notify(STREAM_DATA_CHAR_UUID)
                 await self._client.disconnect()
         finally:
             self._client = None
@@ -434,3 +546,14 @@ class BleTransport:
                 continue
             logger.debug("RX %s: %s", self.name, line)
             self._rx_queue.put(line)
+
+    def _on_stream_notify(self, _sender: object, data: bytearray) -> None:
+        """Callback de la caracteristica dedicada de streaming (ver
+        `STREAM_DATA_CHAR_UUID`) — cola separada de `_on_notify`, sin el
+        filtro de prompt de shell ni el marcador de timeout del puente: este
+        canal es un passthrough del UART del Qorvo, no pasa por el shell de
+        comandos (ver comentario junto a `STREAM_SERVICE_UUID`).
+        """
+        for line in self._stream_assembler.feed(bytes(data)):
+            logger.debug("STREAM %s: %s", self.name, line)
+            self._stream_queue.put(line)

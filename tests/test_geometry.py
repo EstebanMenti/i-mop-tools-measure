@@ -10,7 +10,7 @@ from imop_measure.config.models import Anchor
 from imop_measure.geometry.distance import euclidean_distance
 from imop_measure.geometry.pairs import all_pairs
 
-ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent / "environments"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 def _anchor(key: str, posicion: tuple[float, float, float]) -> Anchor:
@@ -52,8 +52,12 @@ def test_all_pairs_sin_repeticion() -> None:
     }
 
 
-def test_all_pairs_ambiente_sala_20_real() -> None:
-    ambiente = load_ambiente(ENVIRONMENTS_DIR / "sala_20.toml")
+def test_all_pairs_ambiente_ejemplo_real() -> None:
+    """Usa `tests/fixtures/sala_ejemplo.toml` (ver docstring de
+    `test_config.test_load_ambiente_ejemplo_real`): posiciones fijas, no
+    atadas al ambiente de trabajo `environments/sala_20.toml`.
+    """
+    ambiente = load_ambiente(FIXTURES_DIR / "sala_ejemplo.toml")
     n = len(ambiente.anchors)
 
     pairs = all_pairs(ambiente.anchors)
@@ -64,4 +68,5 @@ def test_all_pairs_ambiente_sala_20_real() -> None:
     node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
     distancia = euclidean_distance(node_10, node_11)
 
-    assert distancia == pytest.approx(math.sqrt(0.03**2 + 0.03**2 + 0.59**2), abs=1e-3)
+    # Posiciones fijas del fixture: node_10 (1, 1, 0) y node_11 (0, 2, 0).
+    assert distancia == pytest.approx(math.sqrt(1.0**2 + 1.0**2), abs=1e-3)

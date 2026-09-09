@@ -21,6 +21,8 @@ servicio **Nordic UART Service (NUS)**, que transporta un shell de Zephyr
 | Servicio NUS | `6e400001-b5a3-f393-e0a9-e50e24dcca9e` |
 | Característica RX (el cliente escribe comandos acá) | `6e400002-b5a3-f393-e0a9-e50e24dcca9e` |
 | Característica TX (el nodo notifica la salida acá) | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` |
+| Servicio "Qorvo Stream" (fw puente ≥ 0.3.0) | `019dad38-2b03-4df9-ac87-70ce530540fb` |
+| Característica "Qorvo Stream Data" (solo Notify) | `36a9a2d9-a035-440f-8e59-ff0a72b2ba51` |
 
 Pasos de conexión obligatorios:
 
@@ -68,15 +70,26 @@ qorvo <texto>                     # pasa <texto> tal cual a la CLI del Qorvo por
   antes del primer `qorvo <cmd>`, si no, no responde.
 - Error de timeout (texto exacto, útil para detectarlo por parsing):
   `Error: sin respuesta del modulo Qorvo (timeout)`.
-- **Limitación de diseño:** `qorvo <cmd>` es estrictamente request/response
-  y no está pensado para reenviar datos asíncronos del Qorvo. Sin embargo,
-  las notificaciones `SESSION_INFO_NTF` de una sesión de ranging activa
-  **sí llegan** por el canal de notificaciones NUS TX una vez que la sesión
-  fue arrancada con `qorvo INITF ...` / `qorvo RESPF ...` — quedó
-  confirmado con hardware real (30/30 notificaciones recibidas) en
-  `../i-mop-qorvo-CLI-script/docs/verificacion-comandos-responder-ble.md`.
-  No están garantizadas completas ni en orden: el código de lectura debe
-  tolerar huecos.
+- **Limitación de diseño (obsoleta desde fw puente ≥ 0.3.0):** `qorvo <cmd>`
+  es estrictamente request/response con una ventana acotada (400 ms de
+  silencio / timeout duro de 8 s) y, al vencer esa ventana, el puente
+  suspendía el UART hacia el Qorvo incondicionalmente: con
+  `SESSION_INFO_NTF` llegando cada ~200 ms durante el ranging, el silencio
+  nunca se cumplía, la ventana corría siempre hasta los 8 s y todo lo que el
+  Qorvo transmitía después se perdía hasta el próximo comando.
+- **[fw puente ≥ 0.3.0] Canal dedicado de streaming:** el firmware agregó el
+  servicio GATT "Qorvo Stream" (solo Notify, ver tabla §1), activado con el
+  subcomando `qorvo stream on` (y `qorvo stream off`), que reenvía la salida
+  del Qorvo de forma continua e indefinida durante una sesión de ranging
+  activa, sin pasar por el shell de comandos. `BleTransport` se suscribe a
+  esa característica al conectar, activa el streaming con `enable_stream()`
+  (dentro de `open()`, tras `qorvo on`) y lo **reactiva tras cada
+  reconexión automática** — es estado de la sesión GATT, se apaga solo al
+  caerse la conexión BLE (a diferencia del encendido físico del Qorvo, que
+  es un GPIO persistente). Las notificaciones `SESSION_INFO_NTF` (la
+  lectura de distancia) llegan por ese canal y las respuestas de comandos
+  por NUS TX: nunca se mezclan (`read_notification_line()` vs
+  `read_line()` en el contrato `Transport`).
 
 ## 3. Secuencia de configuración por nodo
 
@@ -140,6 +153,15 @@ sin tocar la app `RESPF` en curso.
 > (ver `reports/medicion-20-20260908-084928.md`).
 
 ## 4. Lectura de la distancia medida
+
+> **[fw puente ≥ 0.3.0]:** las notificaciones `SESSION_INFO_NTF` ya **no**
+> llegan por NUS TX: viajan por la característica dedicada "Qorvo Stream
+> Data" (ver §1 y §2), que `BleTransport` activa en `open()` con
+> `qorvo stream on` y reactiva tras cada reconexión automática. En el
+> código, `DwmCliClient.read_notifications` lee vía
+> `Transport.read_notification_line()` — canal separado de las respuestas
+> de comandos (`read_line()`), de modo que un `STAT` de keepalive no compite
+> con las notificaciones de una sesión en curso.
 
 La distancia llega como notificación asíncrona. La documentación original
 (tomada del repo hermano) describe **dos líneas** (la segunda arranca con

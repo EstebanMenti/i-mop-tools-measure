@@ -1,0 +1,50 @@
+# =============================================================================
+# tests/fixtures/sala_ejemplo.toml — Ambiente de ejemplo para tests
+# =============================================================================
+# Fixture ESTABLE para tests de config/geometry (ver tests/test_config.py,
+# tests/test_geometry.py). A diferencia de environments/sala_20.toml — que
+# es un archivo de trabajo real, editado sesion a sesion segun que nodos
+# fisicos esten disponibles para probar ese dia — este archivo nunca
+# cambia: los tests que verifican el parseo de un "ambiente real" (formato
+# TOML, ble_timeouts, geometria de N anclas) dependen de valores fijos, no
+# del ambiente de turno.
+# =============================================================================
+
+[sala]
+id = "ejemplo"
+nombre = "Ambiente de ejemplo (fixture de tests)"
+
+[dimensions]
+x = 6.0
+y = 8.0
+z = 3.0
+
+[[anchors]]
+key             = "uwb_node_8"
+nombre          = "UWB-Node-8"
+mac             = "F4:B7:F3:B1:93:1E"
+uwb_addr        = "00:08"
+posicion        = [1.00, 0.00, 0.00]
+tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_10"
+nombre          = "UWB-Node-10"
+mac             = "FD:7A:90:57:CC:9F"
+uwb_addr        = "00:10"
+posicion        = [1.0, 1.0, 0.00]
+tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_11"
+nombre          = "UWB-Node-11"
+mac             = "E5:A2:2C:DB:14:B9"
+uwb_addr        = "00:11"
+posicion        = [0.00, 2.00, 0.00]
+tiempo_prendido = "120s"
+
+[ble_timeouts]
+connection_timeout = 180.0
+command_timeout = 5.0
+qorvo_command_timeout = 10.0
+max_concurrent_connections = 5

@@ -26,6 +26,16 @@ class Transport(Protocol):
         """Devuelve la proxima linea recibida, o `None` si vencio el timeout."""
         ...
 
+    def read_notification_line(self, timeout_s: float) -> str | None:
+        """Linea del canal de notificaciones de ranging (`SESSION_INFO_NTF`).
+
+        Para transportes de un solo canal es el mismo flujo que
+        `read_line`. `BleTransport` lo redefine para leer de la
+        caracteristica GATT dedicada de streaming (separada de las
+        respuestas de comando) — ver su docstring.
+        """
+        ...
+
     @property
     def name(self) -> str:
         """Identificador del transporte, p. ej. `"BLE-FD7A9057CC9F"`."""

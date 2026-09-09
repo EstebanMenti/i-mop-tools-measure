@@ -31,36 +31,60 @@ z = 3.0
 # Formato de tiempo: número + sufijo (s = segundos, m = minutos)
 # ---------------------------------------------------------------------------
 
+#[[anchors]]
+#key             = "uwb_node_1"
+#nombre          = "UWB-Node-1"
+#mac             = "EE:5E:3F:A2:1A:88"
+#uwb_addr        = "00:01"               # TODO: short address UWB real del nodo 1
+#posicion        = [0.00, 0.00, 0.0]    # TODO: posicion real del nodo 1
+#tiempo_prendido = "120s"
+
+#[[anchors]]
+#key             = "uwb_node_2"
+#nombre          = "UWB-Node-2"
+#mac             = "FE:79:A2:F3:52:B9"
+#uwb_addr        = "00:02"               # TODO: short address UWB real del nodo 2
+#posicion        = [0.00, 0.00, 0.50]    # TODO: posicion real del nodo 2
+#tiempo_prendido = "120s"
+
+#[[anchors]]
+#key             = "uwb_node_4"
+#nombre          = "UWB-Node-4"
+#mac             = "C5:2F:48:B1:BB:CA"
+#uwb_addr        = "00:04"               # TODO: short address UWB real del nodo 2
+#posicion        = [0.00, 0.00, 1.00]    # TODO: posicion real del nodo 2
+#tiempo_prendido = "120s"
+
+#[[anchors]]
+#key             = "uwb_node_6"
+#nombre          = "UWB-Node-6"
+#mac             = "CC:EB:FE:5B:C5:E9"
+#uwb_addr        = "00:06"               # TODO: short address UWB real del nodo 2
+#posicion        = [0.00, 1.00, 0.00]    # TODO: posicion real del nodo 2
+#tiempo_prendido = "120s"
+
+[[anchors]]
+key             = "uwb_node_8"
+nombre          = "UWB-Node-8"
+mac             = "F4:B7:F3:B1:93:1E"
+uwb_addr        = "00:08"               # TODO: short address UWB real del nodo 2
+posicion        = [1.00, 0.00, 0.00]    # TODO: posicion real del nodo 2
+tiempo_prendido = "120s"
+
 [[anchors]]
 key             = "uwb_node_10"
 nombre          = "UWB-Node-10"
 mac             = "FD:7A:90:57:CC:9F"
-uwb_addr        = "00:01"               # TODO: short address UWB real del nodo 10
-posicion        = [0.0, 0.0, 0.85]      # TODO: posicion real del nodo 10
+uwb_addr        = "00:10"               # TODO: short address UWB real del nodo 10
+posicion        = [1.0, 1.0, 0.00]      # TODO: posicion real del nodo 10
 tiempo_prendido = "120s"
 
 [[anchors]]
 key             = "uwb_node_11"
 nombre          = "UWB-Node-11"
 mac             = "E5:A2:2C:DB:14:B9"
-uwb_addr        = "00:02"               # TODO: short address UWB real del nodo 11
-posicion        = [0.03, 0.03, 0.26]    # TODO: posicion real del nodo 11
-tiempo_prendido = "120s"
-
-[[anchors]]
-key             = "uwb_node_1"
-nombre          = "UWB-Node-1"
-mac             = "EE:5E:3F:A2:1A:88"
-uwb_addr        = "00:03"               # TODO: short address UWB real del nodo 1
-posicion        = [0.03, 1.03, 0.26]    # TODO: posicion real del nodo 1
-tiempo_prendido = "120s"
-
-[[anchors]]
-key             = "uwb_node_2"
-nombre          = "UWB-Node-2"
-mac             = "FE:79:A2:F3:52:B9"
-uwb_addr        = "00:04"               # TODO: short address UWB real del nodo 2
-posicion        = [1.03, 0.03, 0.26]    # TODO: posicion real del nodo 2
+uwb_addr        = "00:11"               # TODO: short address UWB real del nodo 11
+posicion        = [0.00, 2.00, 0.00]    # TODO: posicion real del nodo 11
 tiempo_prendido = "120s"
 
 
