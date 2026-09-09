@@ -84,6 +84,48 @@ class TestSendCommand:
 
         assert client.send_command("THREAD") == ["linea 1", "linea 2"]
 
+    def test_quiet_period_without_own_echo_on_ntf_backlog_raises_timeout(self) -> None:
+        # Real (2026-09-09, hardware real, firmware puente >= 0.3.0): el
+        # STAT de keepalive del respondedor recibio decenas de notificaciones
+        # SESSION_INFO_NTF capturadas por la ventana de relay de `qorvo
+        # STAT`, cortadas por silencio y sin haber visto nunca el eco de
+        # STAT — el "ok" real se perdio. Antes ese backlog se devolvia como
+        # si fuera la respuesta y parse_stat fallaba con "Salida de STAT sin
+        # bloque JSxxxx"; ahora silencio con contenido pero sin eco propio
+        # no se acepta como respuesta: debe vencer por timeout (y el
+        # keepalive de pair_runner ignora la falla).
+        client, _ = make_client({"STAT": [ntf_line(1), ntf_line(2)]})
+
+        with pytest.raises(CommandTimeoutError):
+            client.send_command("STAT")
+
+    def test_discards_stale_backlog_of_another_command(self) -> None:
+        # Real (repo hermano, puente BLE): la respuesta rezagada de un
+        # comando anterior (con su propio eco y su propio "ok") llego en la
+        # cola justo cuando se pidió STAT — debe descartarse y seguir
+        # esperando la respuesta real.
+        client, transport = make_client({"STAT": STAT_REAL})
+        transport.push_lines(["THREAD", "THREAD NAME     \tStack usage", "ok"])
+
+        lines = client.send_command("STAT")
+
+        assert lines[0].startswith("JS0109")
+        assert lines[-1] == "ok"
+        assert not any(line.startswith("THREAD") for line in lines)
+
+    def test_discards_ntf_backlog_ending_in_foreign_echo(self) -> None:
+        # Real (repo hermano, dos placas por Bluetooth): el eco ajeno no
+        # estaba en la primera linea sino al final de un backlog largo de
+        # notificaciones, seguido del eco+"ok" rezagado de un STOP anterior.
+        client, transport = make_client({"STAT": STAT_REAL})
+        transport.push_lines([ntf_line(n) for n in range(40)] + ["STOP", "ok"])
+
+        lines = client.send_command("STAT")
+
+        assert lines[0].startswith("JS0109")
+        assert lines[-1] == "ok"
+        assert not any(line.startswith("SESSION_INFO_NTF") or line == "STOP" for line in lines)
+
 
 class TestStatAndMode:
     def test_stat_parses_real_output(self) -> None:

@@ -85,9 +85,23 @@ class FakeTransport:
             return self.notifications.popleft()
         return None
 
+    def read_notification_line(self, timeout_s: float) -> str | None:
+        """Mismo canal que `read_line` (ver `Transport.read_notification_line`);
+        despacha por `self` para que subclases que sobrescriben `read_line`
+        queden cubiertas automaticamente."""
+        return self.read_line(timeout_s)
+
     def push_lines(self, lines: Iterable[str]) -> None:
         """Encola lineas arbitrarias como si llegaran del nodo."""
         self._pending.extend(lines)
+
+
+# Duplicado a proposito (no se importa imop_measure.transport.ble_link
+# aca): ese modulo importa `bleak` a nivel de modulo, y fakes.py lo usan
+# tambien tests que no necesitan el extra `bleak` instalado. Debe coincidir
+# con ble_link.NUS_TX_CHAR_UUID / STREAM_DATA_CHAR_UUID.
+_NUS_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+_STREAM_DATA_CHAR_UUID = "36a9a2d9-a035-440f-8e59-ff0a72b2ba51"
 
 
 class FakeBleakClient:
@@ -116,7 +130,9 @@ class FakeBleakClient:
         self,
         address: str,
         disconnected_callback: Callable[["FakeBleakClient"], None] | None = None,
+        services: Iterable[str] | None = None,
         *,
+        winrt: dict[str, object] | None = None,
         script: dict[str, list[bytes]] | None = None,
         mtu_size: int = 247,
         fail_connect: bool = False,
@@ -126,7 +142,7 @@ class FakeBleakClient:
         self.address = address
         self._disconnected_callback = disconnected_callback
         self._connected = False
-        self._notify_callback: Callable[[object, bytearray], None] | None = None
+        self._notify_callbacks: dict[str, Callable[[object, bytearray], None]] = {}
         self.script = dict(script or {})
         self.mtu_size = mtu_size
         self.fail_connect = fail_connect
@@ -134,10 +150,22 @@ class FakeBleakClient:
         self.fail_connect_exception = fail_connect_exception
         self.connect_attempts = 0
         self.sent: list[bytes] = []
+        # Para que los tests puedan verificar con que opciones se construyo
+        # este cliente (p. ej. si BleTransport pidio el cache de servicios).
+        self.requested_services = list(services) if services is not None else None
+        self.winrt_args = dict(winrt or {})
 
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def _notify_callback(self) -> Callable[[object, bytearray], None] | None:
+        """Compat: alias al callback de la caracteristica de comandos (NUS
+        TX) — la mayoria de los tests existentes simula trafico en ese unico
+        canal, de antes del canal de streaming dedicado. Para simular datos
+        de ese canal nuevo, usar `simulate_stream_data`."""
+        return self._notify_callbacks.get(_NUS_TX_CHAR_UUID)
 
     async def connect(self) -> None:
         from bleak.exc import BleakError
@@ -154,10 +182,10 @@ class FakeBleakClient:
     async def start_notify(
         self, char_specifier: str, callback: Callable[[object, bytearray], None]
     ) -> None:
-        self._notify_callback = callback
+        self._notify_callbacks[char_specifier] = callback
 
     async def stop_notify(self, char_specifier: str) -> None:
-        self._notify_callback = None
+        self._notify_callbacks.pop(char_specifier, None)
 
     async def write_gatt_char(
         self, char_specifier: str, data: bytes, response: bool | None = None
@@ -167,9 +195,31 @@ class FakeBleakClient:
         assert text.startswith("qorvo "), f"se esperaba el prefijo 'qorvo ': {text!r}"
         command = text[len("qorvo ") :]
         chunks = self.script.get(command)
-        if chunks and self._notify_callback is not None:
-            for chunk in chunks:
-                self._notify_callback(None, bytearray(chunk))
+        nus_callback = self._notify_callbacks.get(_NUS_TX_CHAR_UUID)
+        stream_callback = self._notify_callbacks.get(_STREAM_DATA_CHAR_UUID)
+        # Emula el firmware del puente >= 0.3.0 (I-mop-nrf52840-fw): las
+        # respuestas de comandos viajan por NUS TX (canal de comandos) y las
+        # notificaciones SESSION_INFO_NTF por la caracteristica dedicada de
+        # streaming (ver `simulate_stream_data`). Dentro de la respuesta de
+        # un comando, todo chunk desde el primero que contiene
+        # "SESSION_INFO_NTF" (inclusive sus fragmentos de continuacion) se
+        # considera dato de streaming.
+        in_stream = False
+        for chunk in chunks or []:
+            if not in_stream and b"SESSION_INFO_NTF" in chunk:
+                in_stream = True
+            if in_stream:
+                if stream_callback is not None:
+                    stream_callback(None, bytearray(chunk))
+            elif nus_callback is not None:
+                nus_callback(None, bytearray(chunk))
+
+    def simulate_stream_data(self, chunk: bytes) -> None:
+        """Simula datos entrantes por la caracteristica dedicada de streaming
+        (`STREAM_DATA_CHAR_UUID`), separada del canal de comandos."""
+        callback = self._notify_callbacks.get(_STREAM_DATA_CHAR_UUID)
+        assert callback is not None, "no suscripto a la caracteristica de streaming"
+        callback(None, bytearray(chunk))
 
     def simulate_disconnect(self) -> None:
         """Simula un corte de conexion espontaneo (ej. el timeout de inactividad real)."""

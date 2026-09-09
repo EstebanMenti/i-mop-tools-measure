@@ -35,17 +35,18 @@ def test_load_sala_20_real() -> None:
     ambiente = load_ambiente(ENVIRONMENTS_DIR / "sala_20.toml")
 
     assert ambiente.id == "20"
+    # Actualizado 2026-09-09: UWB-Node-6 (y previamente 1/2/4) fuera del
+    # ambiente real — quedan 3 anclas activas.
     assert {anchor.key for anchor in ambiente.anchors} == {
+        "uwb_node_8",
         "uwb_node_10",
         "uwb_node_11",
-        "uwb_node_1",
-        "uwb_node_2",
     }
-    assert len(ambiente.anchors) == 4
+    assert len(ambiente.anchors) == 3
 
     node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
-    assert node_11.posicion == pytest.approx((0.03, 0.03, 0.26))
-    assert node_11.uwb_addr == "00:02"
+    assert node_11.posicion == pytest.approx((0.0, 2.0, 0.0))
+    assert node_11.uwb_addr == "00:11"
     assert node_11.mac == "E5:A2:2C:DB:14:B9"
 
     assert ambiente.ble_timeouts["connection_timeout"] == pytest.approx(180.0)

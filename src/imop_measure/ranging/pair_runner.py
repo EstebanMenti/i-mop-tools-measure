@@ -328,7 +328,11 @@ def _keep_responder_alive(client: DwmCliClient) -> None:
     """
     try:
         client.stat()
-    except MeasureError:
+    except Exception:
+        # Exception generica a proposito: el keepalive es best-effort y una
+        # falla inesperada (p. ej. un ValueError de parseo si la respuesta
+        # del STAT se pierde entre el backlog de notificaciones del canal de
+        # comandos) no debe abortar la medicion en curso.
         logger.debug(
             "%s: keepalive STAT fallo durante el muestreo (se ignora)", client.name, exc_info=True
         )

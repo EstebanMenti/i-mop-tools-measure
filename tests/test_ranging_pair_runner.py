@@ -107,7 +107,9 @@ def _make_factory(
         fake = fakes[address]
 
         def client_factory(
-            addr: str, disconnected_callback: Callable[[object], None] | None = None
+            addr: str,
+            disconnected_callback: Callable[[object], None] | None = None,
+            **kwargs: object,
         ) -> FakeBleakClient:
             fake._disconnected_callback = disconnected_callback
             return fake
@@ -131,7 +133,9 @@ def _make_factory_multi(fakes: dict[str, FakeBleakClient]) -> Callable[[str], Bl
         fake = fakes[address]
 
         def client_factory(
-            addr: str, disconnected_callback: Callable[[object], None] | None = None
+            addr: str,
+            disconnected_callback: Callable[[object], None] | None = None,
+            **kwargs: object,
         ) -> FakeBleakClient:
             fake._disconnected_callback = disconnected_callback
             return fake

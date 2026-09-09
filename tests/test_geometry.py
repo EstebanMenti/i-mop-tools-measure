@@ -64,4 +64,6 @@ def test_all_pairs_ambiente_sala_20_real() -> None:
     node_11 = next(a for a in ambiente.anchors if a.key == "uwb_node_11")
     distancia = euclidean_distance(node_10, node_11)
 
-    assert distancia == pytest.approx(math.sqrt(0.03**2 + 0.03**2 + 0.59**2), abs=1e-3)
+    # Posiciones actuales de sala_20.toml (2026-09-09):
+    # node_10 (1, 1, 0) y node_11 (0, 2, 0).
+    assert distancia == pytest.approx(math.sqrt(1.0**2 + 1.0**2), abs=1e-3)
