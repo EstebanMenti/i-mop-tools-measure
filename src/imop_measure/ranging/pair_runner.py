@@ -46,6 +46,20 @@ _DEFAULT_QORVO_COMMAND_TIMEOUT_S = 10.0
 # UWB-Node-11 como respondedor (ver reports/medicion-20-20260908-084928.md).
 _RESPONDER_KEEPALIVE_INTERVAL_S = 5.0
 
+# [Verificado 2026-09-09, hardware real] Un `transport.open()` que falla a
+# medio camino (p. ej. la conexion se cae justo esperando la respuesta de
+# `enable_stream()`) puede dejar un hilo/loop de asyncio de `BleTransport`
+# corriendo para siempre sin nadie que lo cierre (`open()` no se limpia
+# solo si una etapa intermedia falla) — un intento posterior de conectar al
+# MISMO dispositivo puede entonces fallar con un error de WinRT no
+# relacionado (`[WinError -2147023673] El usuario ha cancelado la
+# operacion`), porque el stack BLE de Windows todavia ve una sesion GATT a
+# medio cerrar hacia esa direccion. `open_initiator` ahora cierra siempre el
+# transporte fallido antes de reintentar (nunca reusa uno a medio abrir) y
+# reintenta con un backoff corto para darle tiempo al stack de asentarse.
+_OPEN_INITIATOR_RETRY_ATTEMPTS = 2
+_OPEN_INITIATOR_RETRY_BACKOFF_S = 3.0
+
 _TransportFactory = Callable[[str], BleTransport]
 
 
@@ -103,27 +117,55 @@ def open_initiator(
     contra varios respondedores en secuencia sin reconectar (ver
     `run_directed_measurement`).
 
-    Nunca deja el transporte a medio abrir: si `ensure_mode_none` falla
-    tras conectar, apaga y cierra antes de propagar.
+    Nunca deja un transporte a medio abrir: ante cualquier falla lo cierra
+    antes de reintentar o propagar — apagando el modulo Qorvo primero
+    (`_safe_power_off`) solo si `transport.open()` llego a tener exito (si
+    la propia conexion fallo, no hay nada que apagar: forzar un apagado ahi
+    dispararia una reconexion inmediata y sin backoff dentro de
+    `_safe_power_off`, justo el apuro que puede volver a fallar contra un
+    dispositivo que recien se desconecto). Reintenta hasta
+    `_OPEN_INITIATOR_RETRY_ATTEMPTS` veces con un transporte nuevo en cada
+    intento (ver esa constante) — una falla de conexion transitoria no debe
+    descartar de entrada las direcciones de todo un nodo (ver
+    `ranging/campaign.py`).
 
     Raises:
-        MeasureError: si no se pudo conectar o no se pudo confirmar modo
+        MeasureError: si ningun intento logro conectar o confirmar modo
             `NONE`.
     """
     make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
-    transport = make_transport(initiator.mac)
     command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
-    client = DwmCliClient(
-        transport, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
-    )
-    transport.open()  # conecta + "qorvo on" + settle
-    try:
-        client.ensure_mode_none()
-    except MeasureError:
-        _safe_power_off(transport)
-        transport.close()
-        raise
-    return InitiatorHandle(anchor=initiator, transport=transport, client=client)
+
+    last_error: MeasureError | None = None
+    for attempt in range(1, _OPEN_INITIATOR_RETRY_ATTEMPTS + 1):
+        transport = make_transport(initiator.mac)
+        client = DwmCliClient(
+            transport, command_timeout_s=command_timeout_s, quiet_period_s=_BLE_QUIET_PERIOD_S
+        )
+        try:
+            transport.open()  # conecta + "qorvo on" + settle
+        except MeasureError as exc:
+            last_error = exc
+            transport.close()
+        else:
+            try:
+                client.ensure_mode_none()
+                return InitiatorHandle(anchor=initiator, transport=transport, client=client)
+            except MeasureError as exc:
+                last_error = exc
+                _safe_power_off(transport)
+                transport.close()
+        if attempt < _OPEN_INITIATOR_RETRY_ATTEMPTS:
+            logger.warning(
+                "%s: fallo al conectar como iniciador (intento %d/%d): %s",
+                initiator.nombre,
+                attempt,
+                _OPEN_INITIATOR_RETRY_ATTEMPTS,
+                last_error,
+            )
+            time.sleep(_OPEN_INITIATOR_RETRY_BACKOFF_S)
+    assert last_error is not None  # el loop corrio al menos una vez
+    raise last_error
 
 
 def close_initiator(handle: InitiatorHandle) -> None:

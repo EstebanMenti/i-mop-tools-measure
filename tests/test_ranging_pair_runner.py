@@ -322,6 +322,29 @@ def test_run_pair_initiator_connect_failure_marks_error_without_raising() -> Non
     assert fake_a.connect_attempts == 0
 
 
+def test_open_initiator_retries_after_transient_connect_failure() -> None:
+    """[Verificado 2026-09-09, hardware real] Una falla de conexion
+    transitoria al abrir el iniciador (ver
+    `pair_runner._OPEN_INITIATOR_RETRY_ATTEMPTS`) no debe descartar de
+    entrada las direcciones de todo el nodo: el primer intento falla, se
+    cierra ese transporte y se reintenta con uno nuevo, que esta vez
+    conecta bien.
+    """
+    _, script_b = _base_scripts()
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b, fail_connect_times=1)
+
+    handle = open_initiator(
+        ANCHOR_B,
+        ble_timeouts={},
+        _transport_factory=_make_factory(FakeBleakClient(ANCHOR_A.mac), fake_b),
+    )
+    try:
+        assert fake_b.connect_attempts == 2
+        assert fake_b.is_connected is True
+    finally:
+        close_initiator(handle)
+
+
 def test_run_pair_handles_real_three_fragment_notification() -> None:
     """Captura real (2026-09-07, uwb_node_10 <-> uwb_node_11 fisicos).
 

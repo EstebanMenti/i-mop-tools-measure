@@ -41,12 +41,14 @@ def run_campaign(
     desconectarlo (`close_initiator`) — conectar por BLE es el costo mas
     grande de una medicion (~10s contra hardware real, medido
     2026-09-08, ver docs/arquitectura.md decision D3): evita pagarlo una
-    vez por direccion en vez de una vez por nodo. Si `open_initiator`
-    falla, todo el grupo queda en error sin reintentar por direccion (no
-    tendria sentido: el iniciador no responde); si una direccion puntual
-    falla con el iniciador ya conectado, no aborta el resto del grupo — el
-    enlace del iniciador se reconecta solo si hizo falta (ver
-    transport/ble_link.py `_ensure_connected`).
+    vez por direccion en vez de una vez por nodo. `open_initiator` ya
+    reintenta unas pocas veces ante una falla de conexion transitoria (ver
+    esa funcion); si aun asi falla, todo el grupo queda en error sin
+    reintentar por direccion (no tendria sentido: el iniciador no
+    responde). Si una direccion puntual falla con el iniciador ya
+    conectado, no aborta el resto del grupo — el enlace del iniciador se
+    reconecta solo si hizo falta (ver transport/ble_link.py
+    `_ensure_connected`).
 
     Nunca aborta la campaña completa: `run_directed_measurement` ya
     devuelve el error en el propio `MeasuredPair` en vez de lanzar, pero
