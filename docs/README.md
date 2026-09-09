@@ -21,6 +21,7 @@
 | [protocolo-ble-qorvo.md](protocolo-ble-qorvo.md) | Referencia condensada del protocolo BLE + comandos Qorvo usados por este proyecto | Desarrolladores / IA |
 | [formato-ambiente-toml.md](formato-ambiente-toml.md) | Esquema de `environments/sala_XX.toml`, mapeo `uwb_addr` → `ADDR`/`PADDR` | Desarrolladores / Usuarios |
 | [formato-reporte.md](formato-reporte.md) | Esquema del reporte JSON/Markdown que genera `imop-measure run` | Desarrolladores / Usuarios |
+| [empaquetado-windows.md](empaquetado-windows.md) | Cómo generar `imop-measure-gui.exe` con PyInstaller | Desarrolladores |
 
 ## 2. Documentos de referencia (repos hermanos)
 

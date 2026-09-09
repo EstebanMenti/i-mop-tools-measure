@@ -18,6 +18,10 @@ reports/*
 logs/*
 !logs/.gitkeep
 
+# Salida de PyInstaller (ver packaging/imop-measure-gui.spec)
+build/
+dist/
+
 # Editor / OS
 .vscode/
 .idea/

@@ -25,6 +25,10 @@ dev = [
 gui = [
     "PySide6>=6.7",
 ]
+build = [
+    "i-mop-tools-measure[gui]",
+    "pyinstaller>=6.10",
+]
 
 [project.scripts]
 imop-measure = "imop_measure.app.cli:main"
