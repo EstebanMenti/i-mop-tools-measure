@@ -7,7 +7,7 @@ import pytest
 from imop_measure.config.loader import load_ambiente
 from imop_measure.errors import ConfigError
 
-ENVIRONMENTS_DIR = Path(__file__).resolve().parent.parent / "environments"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 _VALID_TOML = """
 [sala]
@@ -31,12 +31,16 @@ tiempo_prendido = "60s"
 """
 
 
-def test_load_sala_20_real() -> None:
-    ambiente = load_ambiente(ENVIRONMENTS_DIR / "sala_20.toml")
+def test_load_ambiente_ejemplo_real() -> None:
+    """Parsea `tests/fixtures/sala_ejemplo.toml`, un ambiente "real" fijo
+    (formato completo: dimensiones, anclas, ble_timeouts) — a diferencia de
+    `environments/sala_20.toml`, que es un archivo de trabajo que se edita
+    sesion a sesion segun que nodos fisicos esten disponibles, este fixture
+    nunca cambia, para que este test no dependa del ambiente de turno.
+    """
+    ambiente = load_ambiente(FIXTURES_DIR / "sala_ejemplo.toml")
 
-    assert ambiente.id == "20"
-    # Actualizado 2026-09-09: UWB-Node-6 (y previamente 1/2/4) fuera del
-    # ambiente real — quedan 3 anclas activas.
+    assert ambiente.id == "ejemplo"
     assert {anchor.key for anchor in ambiente.anchors} == {
         "uwb_node_8",
         "uwb_node_10",
