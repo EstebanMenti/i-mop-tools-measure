@@ -8,9 +8,11 @@ Fase F7).
 """
 
 import time
+from pathlib import Path
 
 from imop_measure import __version__
 from imop_measure.gui.main_window import MainWindow, _format_duration
+from imop_measure.gui.worker import CampaignWorker
 from imop_measure.report.build import DEFAULT_REVIEW_THRESHOLD_CM, DEFAULT_TOLERANCE_CM
 
 
@@ -59,6 +61,34 @@ def test_format_duration() -> None:
     assert _format_duration(0) == "0m 00s"
     assert _format_duration(65) == "1m 05s"
     assert _format_duration(-5) == "0m 00s"
+
+
+def test_action_label_starts_empty(qtbot: object) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+
+    assert window._action_label.text() == ""
+
+
+def test_action_label_updates_from_worker_status_signal(qtbot: object) -> None:
+    """Misma conexion que hace `_on_run_clicked` (`worker.status_update.connect(
+    self._action_label.setText)`), sin arrancar el hilo real -- `Signal.emit`
+    alcanza para probar el cableado en el mismo hilo de test.
+    """
+    window = MainWindow()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    worker = CampaignWorker(
+        environment_path=Path("environments/sala_20.toml"),
+        samples=1,
+        tolerance_cm=DEFAULT_TOLERANCE_CM,
+        review_threshold_cm=DEFAULT_REVIEW_THRESHOLD_CM,
+        report_dir=Path("reports"),
+    )
+    worker.status_update.connect(window._action_label.setText)
+
+    worker.status_update.emit("Conectando a UWB-Node-4...")
+
+    assert window._action_label.text() == "Conectando a UWB-Node-4..."
 
 
 def test_progress_bar_starts_empty(qtbot: object) -> None:

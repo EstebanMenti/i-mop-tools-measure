@@ -35,6 +35,7 @@ class CampaignWorker(QObject):
     """
 
     pair_measured = Signal(object)  # PairResult, uno por direccion medida
+    status_update = Signal(str)  # mensaje legible del paso en curso (ver run_campaign)
     finished = Signal(list, object, object)  # list[PairResult], Path json, Path md
     failed = Signal(str)
 
@@ -74,6 +75,7 @@ class CampaignWorker(QObject):
                 session=SessionParams(),
                 n_samples=self._samples,
                 on_pair_done=on_pair_done,
+                on_status=self.status_update.emit,
             )
             json_path, md_path = write_reports(
                 results,

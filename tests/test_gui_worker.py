@@ -57,7 +57,10 @@ def test_worker_emits_pair_measured_and_finished(qtbot: object, tmp_path: Path) 
         session: object,
         n_samples: int,
         on_pair_done: Callable[[MeasuredPair], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> list[MeasuredPair]:
+        if on_status is not None:
+            on_status("Conectando a UWB-Node-A...")
         result = _fake_measured(initiator=amb.anchors[0], responder=amb.anchors[1])
         if on_pair_done is not None:
             on_pair_done(result)
