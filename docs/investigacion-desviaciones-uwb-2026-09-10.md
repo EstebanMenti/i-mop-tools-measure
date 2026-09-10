@@ -17,7 +17,10 @@ Se reportaron tres síntomas en corridas reales de `imop-measure run`:
 1. **Iniciador "pegado" al primer destino**: un nodo usado como iniciador
    contra varios respondedores (dentro de una misma campaña) reportaba
    casi el mismo valor sin importar el respondedor real. **Causa
-   confirmada y arreglada** (§3).
+   confirmada.** Un primer intento de fix (`power_cycle()` del módulo
+   Qorvo sobre la conexión reusada) resultó insuficiente — el fix real
+   fue dejar de reusar la conexión BLE del iniciador entre direcciones
+   (ver §3, en particular §3.2 vs §3.3).
 2. **Desviación estándar alta** en algunas direcciones (hasta ~56 cm),
    apareciendo solo dentro de campañas completas, nunca en pruebas
    aisladas de un solo par. **Sigue sin causa confirmada** (§4) — es el
@@ -83,27 +86,13 @@ cada conexión nueva crea un `BleTransport` con colas (`_rx_queue`,
 `_stream_queue`) recién instanciadas (`queue.Queue()` en `__init__`, ver
 [ble_link.py](../src/imop_measure/transport/ble_link.py)).
 
-### 3.2 Fix
+### 3.2 Primer intento de fix — insuficiente (v0.1.0)
 
-Apagar y volver a prender el módulo Qorvo (`qorvo off` + 2s + `qorvo on`)
-antes de cada dirección nueva — tanto para el iniciador reusado como para
-el respondedor recién conectado — deja al firmware en un estado
-realmente limpio.
-
-- `BleTransport.power_cycle()` (nuevo,
-  [transport/ble_link.py](../src/imop_measure/transport/ble_link.py)).
-- Se llama antes de cada dirección en
-  `ranging.pair_runner.run_directed_measurement`
-  ([pair_runner.py](../src/imop_measure/ranging/pair_runner.py)), para el
-  iniciador y el respondedor.
-- Costo: ~5s extra por dirección (2s de espera + el settle de `power_on`
-  existente). Deliberado — se prefiere una medición más lenta a una
-  medición silenciosamente contaminada (pedido explícito del usuario).
-
-### 3.3 Verificación del fix
-
-Campaña completa real (`ranging.campaign.run_campaign`, 20 direcciones,
-5 nodos) tras el fix:
+Apagar y volver a prender el módulo Qorvo (`qorvo off` + 2s + `qorvo on`,
+`BleTransport.power_cycle()`) antes de cada dirección, **sobre la misma
+conexión BLE ya abierta** del iniciador reusado, pareció arreglarlo: una
+campaña completa (20 direcciones, 5 nodos) dio medias distintas por cada
+destino en todos los iniciadores:
 
 ```
 Node-4  (iniciador) contra 4 destinos: medias=[168.2, 164.2, 166.8, 180.0]  rango=15.8cm
@@ -113,7 +102,59 @@ Node-10 (iniciador) contra 4 destinos: medias=[267.7, 268.2, 250.9, 269.1]  rang
 Node-11 (iniciador) contra 4 destinos: medias=[200.3, 201.6, 200.1, 226.3]  rango=26.2cm
 ```
 
-Ningún iniciador convergió a un solo valor — problema resuelto.
+> **[2026-09-10, corregido] Esta verificación fue una falsa alarma
+> positiva**: solo miraba que las *medias* fueran distintas entre
+> destinos, nunca volvió a chequear el `mac_address` crudo de las
+> muestras dentro de un grupo con conexión reusada después de agregar
+> `power_cycle()`. Al usar la app real (GUI) se siguieron viendo
+> asimetrías imposibles entre direcciones del mismo par físico (ej.
+> `N4→N8` daba 1.674 m pero `N8→N4` daba 3.510 m). Reproducido de forma
+> controlada con `mac_address` (grupo completo de Node-4, conexión
+> reusada, `power_cycle()` incluido antes de cada dirección):
+>
+> ```
+> N4 -> N6:  mac_address={'0x0006'}                      OK (primera del grupo)
+> N4 -> N8:  mac_address={'0x0006'}  30/30 MAL            <- pegado en N6
+> N4 -> N10: mac_address={'0x0006'}  30/30 MAL            <- pegado en N6
+> N4 -> N11: mac_address={'0x0011','0x0006'} 28/30 MAL    <- casi todo pegado en N6
+> ```
+>
+> Conclusión: **apagar/prender el módulo Qorvo sobre una conexión BLE que
+> se mantiene abierta no alcanza.** El estado "pegado" no vive solo en el
+> chip Qorvo — algo del lado de la sesión BLE/puente tampoco se resetea
+> con un power-cycle del módulo. Ver §3.3 para el fix real.
+
+### 3.3 Fix real (v0.1.1): dejar de reusar la conexión del iniciador
+
+`ranging.campaign.run_campaign` dejó de agrupar direcciones por iniciador
+y de reusar su conexión (`open_initiator`/`close_initiator` una vez por
+grupo, ver versión anterior de `campaign.py`). Ahora llama
+`ranging.pair_runner.run_pair` una vez por cada dirección — conecta y
+desconecta el iniciador **por completo** (reconexión BLE real, no solo
+`power_cycle()` del módulo) en cada una, igual que ya hacía con el
+respondedor.
+
+Verificado con `mac_address`: repitiendo la misma prueba aislada
+(conexión nueva de punta a punta por dirección, sin reusar nada) da
+resultados simétricos y correctos —
+`N8→N4` y `N4→N8` dieron ambas ~349cm, `mac_address` correcto en el
+100% de las 60 muestras.
+
+- Costo: la conexión BLE del iniciador (~10-20s) se paga en cada
+  dirección en vez de una vez por nodo — una campaña de 5 nodos tarda
+  sensiblemente más. Deliberado (pedido explícito del usuario: preferir
+  una campaña más lenta a mediciones contaminadas).
+- Se mantiene además el `power_cycle()` de §3.2 como capa extra
+  (se hace un fresh-connect *y* un power-cycle explícito antes de medir).
+- `ranging.pair_runner.open_initiator`/`close_initiator`/
+  `run_directed_measurement` siguen existiendo (`run_pair` los usa
+  internamente para una sola dirección) — lo que cambió es que
+  `campaign.py` ya no comparte un mismo `InitiatorHandle` entre varias
+  llamadas.
+
+> **Pendiente de verificar con una campaña completa real tras este
+> cambio** (ver §4 más abajo si esta sección todavía no se actualizó con
+> ese resultado).
 
 ## 4. Problema abierto: desviación estándar alta (sin causa confirmada)
 
@@ -160,6 +201,20 @@ aplicado), **7 de 20 direcciones (35%) siguen mostrando std > 10cm**:
   distintas corridas del día aparecieron picos en direcciones de Node-4,
   Node-6, Node-8, Node-10 y Node-11 por turnos, no siempre el mismo.
 
+> **[2026-09-10] Hipótesis a reevaluar tras el fix real de §3.3**: en la
+> reproducción del bug de §3.2 (Node-4, conexión reusada, `mac_address`
+> capturado), la dirección `N4→N11` mostró una **mezcla** de
+> `mac_address` correcto e incorrecto (28/30 pegado en N6, 2/30 ya
+> correcto en N11) — es decir, el estado "pegado" a veces se rompe a
+> mitad de una dirección, no es todo-o-nada. Eso produciría exactamente
+> el patrón de §4.1 (bloque de muestras estables "malas" + el resto
+> "buenas", desviación alta) **sin que sea multipath ni ninguna de las
+> hipótesis descartadas en §2** — sería el mismo bug de §3, en su forma
+> parcial/transicional. Falta confirmar esto corriendo una campaña
+> completa con el fix real de §3.3 aplicado y viendo si el problema 2
+> desaparece o se reduce — si es así, quedaría todo unificado bajo una
+> sola causa.
+
 ### 4.2 Próximos pasos sugeridos
 
 1. **Repetir la captura con `RANGE_DIAGNOSTICS_NTF` activo, ya con el fix
@@ -194,7 +249,7 @@ en las campañas completas del día:
 | Campaña con diagnóstico DIAG | 20 | 3 (N6→N4, N8→N11, N10→N8) |
 | Campaña con settle de 2s | 20 | 3 (N4→N8, N6→N8, N11→N8) |
 | A/B test keepalive | 16 | 4 (2 ON, 2 OFF) |
-| Campaña de verificación del fix (§3.3) | 20 | 0 |
+| Campaña de verificación del primer intento de fix (§3.2) | 20 | 0 |
 
 Todas fallaron con el mismo error transitorio de Windows
 (`WinError -2147023673`, "El usuario ha cancelado la operación") o
@@ -203,8 +258,10 @@ claro de qué nodo falla — Node-8 apareció en 3 de las 6 fallas duras, pero
 no de forma consistente entre corridas. Parece inestabilidad genérica del
 stack BLE de Windows (agravada por ~20 dispositivos BLE ajenos alrededor,
 visibles en el scan), no un bug de este proyecto. Sin causa de fondo
-identificada — el reintento automático existente (`_open_and_confirm_none`,
-2 intentos con backoff) ya absorbe la mayoría de los casos.
+identificada — el reintento automático existente (`_open_and_confirm_none`)
+ya absorbe la mayoría de los casos; se subió de 2 a 4 los intentos
+(`_OPEN_RETRY_ATTEMPTS`, pedido explícito del usuario) el 2026-09-10 para
+darle más margen.
 
 ## 6. Cambios de código de esta sesión
 
@@ -214,9 +271,16 @@ identificada — el reintento automático existente (`_open_and_confirm_none`,
   `DwmCliClient.read_notifications` ahora empareja cada `Measurement` con
   el diagnóstico de su ronda. Con tests usando una captura real de
   hardware como fixture (`tests/fixtures/range_diagnostics_ntf_fw110_real.txt`).
-- **`transport/ble_link.py`**: `BleTransport.power_cycle()` (ver §3.2).
+- **`transport/ble_link.py`**: `BleTransport.power_cycle()` (ver §3.2) —
+  se mantiene como capa extra, no fue suficiente por sí sola.
 - **`ranging/pair_runner.py`**: `run_directed_measurement` llama
-  `power_cycle()` antes de cada dirección, iniciador y respondedor.
+  `power_cycle()` antes de cada dirección, iniciador y respondedor
+  (§3.2). `_OPEN_RETRY_ATTEMPTS` subido de 2 a 4 (pedido explícito).
+- **`ranging/campaign.py`** (v0.1.1): reescrito — `run_campaign` ya no
+  agrupa direcciones por iniciador ni reusa su conexión; llama
+  `run_pair` una vez por cada una de las `N*(N-1)` direcciones,
+  conectando y desconectando el iniciador de punta a punta en cada una
+  (ver §3.3, el fix real). `_grouped_by_initiator` se eliminó (sin uso).
 - **`docs/protocolo-ble-qorvo.md`**: corregida la sección 3.1 (keepalive),
   marcada la verificación del 08/09 como obsoleta y agregada la
   verificación fresca del 10/09 contra el firmware actual.
@@ -231,6 +295,7 @@ identificada — el reintento automático existente (`_open_and_confirm_none`,
     esperables (pedido explícito del usuario); una vez que hay al menos
     una dirección medida, la estimación pasa a ser adaptativa (promedio
     real de la corrida en curso).
+- Versión subida de 0.1.0 a 0.1.1 (`pyproject.toml`, `imop_measure/__init__.py`).
 - Ejecutable (`dist/imop-measure-gui.exe`) reconstruido con estos cambios.
 
 > **Nota:** `environments/sala_20.toml` tiene un cambio sin commitear que
