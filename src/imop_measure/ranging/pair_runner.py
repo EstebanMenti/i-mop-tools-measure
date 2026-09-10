@@ -67,7 +67,10 @@ _RESPONDER_KEEPALIVE_INTERVAL_S = 5.0
 # `run_directed_measurement`) cierra siempre el transporte fallido antes de
 # reintentar (nunca reusa uno a medio abrir) y reintenta con un backoff
 # corto para darle tiempo al stack de asentarse.
-_OPEN_RETRY_ATTEMPTS = 2
+# [2026-09-10] Subido de 2 a 4 -- pedido explicito: mas intentos de
+# conexion antes de marcar una direccion como fallida, aceptando que tarde
+# mas, dada la inestabilidad de BLE observada contra hardware real.
+_OPEN_RETRY_ATTEMPTS = 4
 _OPEN_RETRY_BACKOFF_S = 3.0
 
 _TransportFactory = Callable[[str], BleTransport]
