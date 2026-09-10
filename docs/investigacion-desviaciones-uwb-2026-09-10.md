@@ -17,17 +17,22 @@ Se reportaron tres síntomas en corridas reales de `imop-measure run`:
 1. **Iniciador "pegado" al primer destino**: un nodo usado como iniciador
    contra varios respondedores (dentro de una misma campaña) reportaba
    casi el mismo valor sin importar el respondedor real. **Causa
-   confirmada.** Un primer intento de fix (`power_cycle()` del módulo
-   Qorvo sobre la conexión reusada) resultó insuficiente — el fix real
-   fue dejar de reusar la conexión BLE del iniciador entre direcciones
-   (ver §3, en particular §3.2 vs §3.3).
+   confirmada y arreglada.** Un primer intento de fix (`power_cycle()`
+   del módulo Qorvo sobre la conexión reusada, v0.1.0) resultó
+   insuficiente — el fix real (v0.1.1) fue dejar de reusar la conexión
+   BLE del iniciador entre direcciones. Verificado con campaña completa:
+   0 casos de convergencia (ver §3, en particular §3.4).
 2. **Desviación estándar alta** en algunas direcciones (hasta ~56 cm),
    apareciendo solo dentro de campañas completas, nunca en pruebas
-   aisladas de un solo par. **Sigue sin causa confirmada** (§4) — es el
-   punto de partida para continuar esta investigación.
+   aisladas de un solo par. **Mejoró drásticamente con el fix del
+   problema 1** (35% → 5% de direcciones afectadas) — buena parte era en
+   realidad una manifestación parcial del mismo bug (§4.1, §3.4). Queda
+   un caso residual (11.54cm en una campaña de 20 direcciones) sin
+   confirmar si es ruido normal o un remanente menor a investigar.
 3. **Fallas de conexión BLE** intermitentes contra distintos nodos.
    Descriptas en §5, sin causa de fondo identificada (parece
-   inestabilidad genérica del stack BLE de Windows).
+   inestabilidad genérica del stack BLE de Windows) — sin cambios tras
+   el fix (10% de fallas en la última campaña).
 
 ## 2. Hipótesis descartadas (con evidencia)
 
@@ -152,9 +157,59 @@ resultados simétricos y correctos —
   `campaign.py` ya no comparte un mismo `InitiatorHandle` entre varias
   llamadas.
 
-> **Pendiente de verificar con una campaña completa real tras este
-> cambio** (ver §4 más abajo si esta sección todavía no se actualizó con
-> ese resultado).
+### 3.4 Verificación con campaña completa real
+
+Campaña completa (`ranging.campaign.run_campaign`, 20 direcciones, 5
+nodos) con el fix real (§3.3) más los reintentos subidos a 4:
+
+| # | Dirección | Media (m) | Desviación (cm) | Muestras | Estado |
+|---|---|---|---|---|---|
+| 1 | N4 → N6 | 1.546 | 9.99 | 30/30 | ✅ |
+| 2 | N4 → N8 | 3.483 | 1.26 | 30/30 | ✅ |
+| 3 | N4 → N10 | 2.530 | 3.93 | 30/30 | ✅ |
+| 4 | N4 → N11 | 2.002 | 3.01 | 30/30 | ✅ |
+| 5 | N6 → N4 | 1.529 | 8.84 | 30/30 | ✅ |
+| 6 | N6 → N8 | — | — | 0/30 | ❌ ERROR (conexión BLE perdida) |
+| 7 | N6 → N10 | 1.559 | 6.11 | 30/30 | ✅ |
+| 8 | N6 → N11 | 2.483 | 2.29 | 30/30 | ✅ |
+| 9 | N8 → N4 | 3.501 | 2.02 | 30/30 | ✅ |
+| 10 | N8 → N6 | 3.640 | **11.54** | 30/30 | ⚠️ desviación alta |
+| 11 | N8 → N10 | — | — | 0/30 | ❌ ERROR (conexión BLE perdida) |
+| 12 | N8 → N11 | 2.465 | 1.77 | 30/30 | ✅ |
+| 13 | N10 → N4 | 2.461 | 1.67 | 30/30 | ✅ |
+| 14 | N10 → N6 | 1.583 | 4.87 | 30/30 | ✅ |
+| 15 | N10 → N8 | 2.101 | 2.22 | 30/30 | ✅ |
+| 16 | N10 → N11 | 2.840 | 2.32 | 30/30 | ✅ |
+| 17 | N11 → N4 | 2.010 | 3.62 | 30/30 | ✅ |
+| 18 | N11 → N6 | 2.483 | 2.38 | 30/30 | ✅ |
+| 19 | N11 → N8 | 2.455 | 1.59 | 30/30 | ✅ |
+| 20 | N11 → N10 | 2.835 | 2.09 | 30/30 | ✅ |
+
+**Problema 1 (iniciador pegado): resuelto, confirmado.** Cada iniciador
+midió valores claramente distintos contra sus destinos, con rangos
+amplios (82.5cm–193.7cm) — cero convergencia:
+
+```
+Node-4  (iniciador) contra 4 destinos: medias=[154.6, 348.3, 253.0, 200.2] rango=193.7cm
+Node-6  (iniciador) contra 3 destinos: medias=[152.9, 155.9, 248.3]        rango=95.4cm
+Node-8  (iniciador) contra 3 destinos: medias=[350.1, 364.0, 246.5]        rango=117.5cm
+Node-10 (iniciador) contra 4 destinos: medias=[246.1, 158.3, 210.1, 284.0] rango=125.7cm
+Node-11 (iniciador) contra 4 destinos: medias=[201.0, 248.3, 245.5, 283.5] rango=82.5cm
+```
+
+**Problema 2 (desviación alta): mejoró drásticamente.** Solo **1/20
+direcciones (5%)** con std > 10cm (N8→N6, 11.54cm) — contra **7/20 (35%)**
+antes del fix real (§4). Confirma la hipótesis de §4.1: la mayor parte
+del problema 2 era en realidad una manifestación parcial/transicional del
+mismo bug del iniciador pegado (§3), no una causa separada. El único caso
+restante (11.54cm) es mucho más moderado que los saltos previos
+(hasta 48cm) y podría ser ruido normal — no alcanza una muestra de 1 para
+confirmarlo, pero la mejora es clara.
+
+**Problema 3 (fallas de conexión): sin cambios.** 2/20 fallas (10%),
+ambas con Node-8 (N6→N8 como respondedor, N8→N10 como iniciador) — mismo
+error transitorio de Windows de siempre. Sigue sin causa de fondo
+identificada.
 
 ## 4. Problema abierto: desviación estándar alta (sin causa confirmada)
 
@@ -250,6 +305,7 @@ en las campañas completas del día:
 | Campaña con settle de 2s | 20 | 3 (N4→N8, N6→N8, N11→N8) |
 | A/B test keepalive | 16 | 4 (2 ON, 2 OFF) |
 | Campaña de verificación del primer intento de fix (§3.2) | 20 | 0 |
+| Campaña de verificación del fix real (§3.4) | 20 | 2 (N6→N8, N8→N10) |
 
 Todas fallaron con el mismo error transitorio de Windows
 (`WinError -2147023673`, "El usuario ha cancelado la operación") o
@@ -295,6 +351,11 @@ darle más margen.
     esperables (pedido explícito del usuario); una vez que hay al menos
     una dirección medida, la estimación pasa a ser adaptativa (promedio
     real de la corrida en curso).
+  - Leyenda de estado en vivo ("Conectando a...", "Configurando...",
+    "Midiendo distancia...") vía un callback opcional `on_status`
+    propagado desde `pair_runner`/`campaign.py` hasta un `Signal` nuevo
+    de `CampaignWorker` — puramente informativo, no cambia la lógica de
+    medición (mismo criterio que `on_pair_done`).
 - Versión subida de 0.1.0 a 0.1.1 (`pyproject.toml`, `imop_measure/__init__.py`).
 - Ejecutable (`dist/imop-measure-gui.exe`) reconstruido con estos cambios.
 
