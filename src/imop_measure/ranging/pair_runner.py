@@ -39,11 +39,19 @@ _DEFAULT_QORVO_COMMAND_TIMEOUT_S = 10.0
 # es una consulta de solo lectura, no reinicia ni reconfigura la app —
 # a diferencia de INITF/RESPF, ver docs/protocolo-ble-qorvo.md seccion 3).
 #
-# [Verificado 2026-09-08 contra hardware real]: environments/sala_20.toml
-# (3 anclas, 6 direcciones) corrio de punta a punta con este keepalive
-# activo, 30/30 muestras SUCCESS en las 6 direcciones y cero errores de
-# conexion BLE — antes del fix, 2/6 terminaban en error (0/30) con
-# UWB-Node-11 como respondedor (ver reports/medicion-20-20260908-084928.md).
+# [Verificado 2026-09-10 contra hardware real, firmware puente v0.3.1]:
+# prueba A/B (keepalive ON/OFF alternado, 4 direcciones x 2 corridas c/u,
+# 30 muestras) no encontro diferencia medible en desvio estandar ni en
+# tasa de fallas de conexion BLE entre tener este keepalive activo o no
+# — ver docs/protocolo-ble-qorvo.md seccion 3.1 para el detalle y la
+# verificacion 2026-09-08 (obsoleta, hecha antes del canal de streaming
+# dedicado) que este comentario reemplaza.
+#
+# [2026-09-08, obsoleto] environments/sala_20.toml (3 anclas, 6 direcciones)
+# corrio de punta a punta con este keepalive activo, 30/30 muestras SUCCESS
+# en las 6 direcciones y cero errores de conexion BLE — antes del fix, 2/6
+# terminaban en error (0/30) con UWB-Node-11 como respondedor (ver
+# reports/medicion-20-20260908-084928.md).
 _RESPONDER_KEEPALIVE_INTERVAL_S = 5.0
 
 # [Verificado 2026-09-09, hardware real] Un `transport.open()` que falla a
@@ -232,6 +240,19 @@ def run_directed_measurement(
     siguiente comando (ver transport/ble_link.py `_ensure_connected`). La
     conexion del respondedor reintenta ante una falla transitoria (ver
     `_open_and_confirm_none`), igual que `open_initiator`.
+
+    [Verificado 2026-09-10 contra hardware real] Antes de cada direccion se
+    hace un `power_cycle()` completo (`qorvo off` + 2s + `qorvo on`) tanto
+    del iniciador reusado como del respondedor recien conectado: un
+    `STOP` + `INITF` nuevo sobre un modulo que ya venia corriendo una
+    sesion anterior **no actualiza el peer** (`-PADDR=`) — sigue devolviendo
+    `SESSION_INFO_NTF` del primer respondedor contra el que midio, para
+    todas las direcciones siguientes del grupo (reproducido de forma
+    consistente con UWB-Node-11 contra 3 respondedores). El power-cycle lo
+    arregla. Ver `transport.ble_link.BleTransport.power_cycle`. Esto agrega
+    ~5s por direccion (2s de `power_cycle` + el settle de `power_on`
+    existente) — deliberado, se prefiere una medicion mas lenta a una
+    medicion silenciosamente contaminada.
     """
     initiator = initiator_handle.anchor
     client_init = initiator_handle.client
@@ -248,11 +269,17 @@ def run_directed_measurement(
             command_timeout_s=command_timeout_s,
             label=responder.nombre,
         )
+        # Power-cycle del respondedor recien conectado, para el mismo
+        # motivo que el del iniciador (ver docstring arriba) — belt and
+        # suspenders, aunque ya es una conexion fresca.
+        transport_resp.power_cycle()
+        client_resp.ensure_mode_none()
 
-        # El iniciador ya esta en NONE por open_initiator() o por el
-        # _stop_quietly() de la direccion anterior del grupo, pero se
-        # reconfirma aca (barato, un STOP+STAT): si el STOP anterior fallo
-        # en silencio, mejor detectarlo ahora que arrancar INITF a ciegas.
+        # Power-cycle del iniciador (reusado entre respondedores del
+        # mismo grupo): sin esto, INITF con un -PADDR= nuevo no toma
+        # efecto (ver docstring). Reconfirma NONE despues, igual que
+        # antes.
+        initiator_handle.transport.power_cycle()
         client_init.ensure_mode_none()
 
         addr_init = uwb_addr_to_int(initiator.uwb_addr)

@@ -22,6 +22,7 @@
 | [formato-ambiente-toml.md](formato-ambiente-toml.md) | Esquema de `environments/sala_XX.toml`, mapeo `uwb_addr` → `ADDR`/`PADDR` | Desarrolladores / Usuarios |
 | [formato-reporte.md](formato-reporte.md) | Esquema del reporte JSON/Markdown que genera `imop-measure run` | Desarrolladores / Usuarios |
 | [empaquetado-windows.md](empaquetado-windows.md) | Cómo generar `imop-measure-gui.exe` con PyInstaller | Desarrolladores |
+| [investigacion-desviaciones-uwb-2026-09-10.md](investigacion-desviaciones-uwb-2026-09-10.md) | Investigación de desviaciones en mediciones reales: hipótesis descartadas, causa confirmada (iniciador sin power-cycle) y fix, problema abierto pendiente | Desarrolladores / IA |
 
 ## 2. Documentos de referencia (repos hermanos)
 

@@ -45,6 +45,7 @@ def make_transport(
         ADDRESS,
         power_on_settle_s=0.0,
         power_drain_s=0.05,
+        power_cycle_off_settle_s=0.0,
         connect_retry_attempts=connect_retry_attempts,
         connect_retry_backoff_s=connect_retry_backoff_s,
         _client_factory=factory,
@@ -61,6 +62,15 @@ class TestLifecycle:
 
         assert b"qorvo on\n" in client.sent
         assert not client.is_connected
+
+    def test_power_cycle_sends_off_then_on(self) -> None:
+        transport, client = make_transport()
+
+        with transport:
+            client.sent.clear()
+            transport.power_cycle()
+
+        assert client.sent == [b"qorvo off\n", b"qorvo on\n"]
 
     def test_connect_failure_raises_transport_error(self) -> None:
         fake = FakeBleakClient(ADDRESS, fail_connect=True)
@@ -268,6 +278,7 @@ class TestServiceCache:
             ADDRESS,
             power_on_settle_s=0.0,
             power_drain_s=0.05,
+            power_cycle_off_settle_s=0.0,
             connect_timeout_s=5.0,
             _client_factory=factory,
         )

@@ -338,3 +338,45 @@ class TestNotifications:
         )
 
         assert received == [4]
+
+    def test_attaches_preceding_diagnostics_to_measurement(self) -> None:
+        # Con DIAG 1 activo, RANGE_DIAGNOSTICS_NTF llega antes que la
+        # SESSION_INFO_NTF de la misma ronda (ver read_notifications).
+        client, _ = make_client(
+            {},
+            notifications=[
+                "RANGE_DIAGNOSTICS_NTF: {n_reports=1",
+                "[msg_id=RANGING_RESPONSE, action=RX, antenna_set=0,"
+                " frame_status={SUCCESS: 1, WIFI_COEX: 1, GRANT_DURATION_EXCEEDED: 0},"
+                " cfo_present=0, nb_aoa=0]}",
+                ntf_line(0),
+            ],
+        )
+
+        measurements = client.read_notifications(max_count=1)
+
+        assert len(measurements) == 1
+        diagnostics = measurements[0].diagnostics
+        assert diagnostics is not None
+        assert diagnostics.any_wifi_coex is True
+
+    def test_measurement_without_diag_has_no_diagnostics(self) -> None:
+        client, _ = make_client({}, notifications=[ntf_line(0)])
+
+        measurements = client.read_notifications(max_count=1)
+
+        assert measurements[0].diagnostics is None
+
+    def test_unparseable_diagnostics_block_does_not_block_measurement(self) -> None:
+        client, _ = make_client(
+            {},
+            notifications=[
+                "RANGE_DIAGNOSTICS_NTF: {n_reports=0}",
+                ntf_line(0),
+            ],
+        )
+
+        measurements = client.read_notifications(max_count=1)
+
+        assert len(measurements) == 1
+        assert measurements[0].diagnostics is None
