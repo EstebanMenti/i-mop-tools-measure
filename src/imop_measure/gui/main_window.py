@@ -5,9 +5,10 @@ visual de `imop-measure run`, no un visor de reportes ni un editor del
 TOML).
 """
 
+import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QTableView,
@@ -23,6 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from imop_measure import __version__
+from imop_measure.config.loader import load_ambiente
+from imop_measure.errors import MeasureError
 from imop_measure.gui.models import CampaignResultsModel
 from imop_measure.gui.worker import CampaignWorker, start_worker
 from imop_measure.report.build import DEFAULT_REVIEW_THRESHOLD_CM, DEFAULT_TOLERANCE_CM
@@ -31,6 +36,23 @@ from imop_measure.report.models import PairResult
 _DEFAULT_SAMPLES = 30  # mismo default que app/cli.py (DEFAULT_SAMPLES)
 _DEFAULT_ENVIRONMENT = "environments/sala_20.toml"
 _DEFAULT_REPORT_DIR = "reports"
+
+# Estimacion de tiempo para la barra de progreso -- valores redondos
+# basados en corridas reales contra hardware (5 nodos, con el
+# power_cycle() de ranging/pair_runner.py activo, ver docs/protocolo-ble-qorvo.md):
+# la mayoria de las direcciones tardan ~60-75s, y una reconexion BLE
+# transitoria (bastante comun, ver transport/ble_link.py) agrega ~90s mas
+# esa direccion. Se usan solo como estimacion INICIAL, antes de tener datos
+# reales de la corrida en curso -- ver _estimated_total_s().
+_ESTIMATED_S_PER_DIRECTION = 70.0
+_ESTIMATED_DISCONNECTS = 5
+_ESTIMATED_S_PER_DISCONNECT = 90.0
+
+
+def _format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    minutes, secs = divmod(total_seconds, 60)
+    return f"{minutes}m {secs:02d}s"
 
 
 class MainWindow(QMainWindow):
@@ -44,11 +66,15 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("imop-measure — Medición de distancia UWB")
+        self.setWindowTitle(f"imop-measure — Medición de distancia UWB (v{__version__})")
         self.resize(900, 600)
 
         self._thread: QThread | None = None
         self._worker: CampaignWorker | None = None
+        self._campaign_start: float | None = None
+        self._total_directions = 0
+        self._completed_directions = 0
+        self._initial_estimate_s = 0.0
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -70,9 +96,26 @@ class MainWindow(QMainWindow):
         self._table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self._table, 1)
 
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("Sin corridas todavía")
+        layout.addWidget(self._progress_bar)
+
+        self._time_label = QLabel("")
+        layout.addWidget(self._time_label)
+
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(1000)
+        self._progress_timer.timeout.connect(self._update_time_label)
+
         self._report_label = QLabel("")
         self._report_label.setWordWrap(True)
         layout.addWidget(self._report_label)
+
+        version_label = QLabel(f"imop-measure v{__version__}")
+        version_label.setStyleSheet("color: gray;")
+        layout.addWidget(version_label)
 
     def _build_form(self) -> QFormLayout:
         form = QFormLayout()
@@ -103,7 +146,12 @@ class MainWindow(QMainWindow):
         form.addRow("Umbral de revisión:", self._review_threshold_spin)
 
         self._report_dir_edit = QLineEdit(_DEFAULT_REPORT_DIR)
-        form.addRow("Carpeta de reportes:", self._report_dir_edit)
+        report_dir_browse_btn = QPushButton("Examinar…")
+        report_dir_browse_btn.clicked.connect(self._on_browse_report_dir_clicked)
+        report_dir_row = QHBoxLayout()
+        report_dir_row.addWidget(self._report_dir_edit, 1)
+        report_dir_row.addWidget(report_dir_browse_btn)
+        form.addRow("Carpeta de reportes:", report_dir_row)
 
         return form
 
@@ -114,14 +162,41 @@ class MainWindow(QMainWindow):
         if path:
             self._environment_edit.setText(path)
 
+    def _on_browse_report_dir_clicked(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Elegir carpeta de reportes", self._report_dir_edit.text()
+        )
+        if path:
+            self._report_dir_edit.setText(path)
+
     def _on_run_clicked(self) -> None:
+        environment_path = Path(self._environment_edit.text())
+        try:
+            ambiente = load_ambiente(environment_path)
+        except MeasureError as exc:
+            self._status_label.setText(f"Error: {exc}")
+            return
+
+        n_anchors = len(ambiente.anchors)
+        self._total_directions = n_anchors * (n_anchors - 1)
+        self._completed_directions = 0
+        self._initial_estimate_s = (
+            self._total_directions * _ESTIMATED_S_PER_DIRECTION
+            + _ESTIMATED_DISCONNECTS * _ESTIMATED_S_PER_DISCONNECT
+        )
+        self._campaign_start = time.monotonic()
+
         self._model.clear()
         self._run_btn.setEnabled(False)
         self._status_label.setText("Midiendo…")
         self._report_label.setText("")
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat(f"%p% (0/{self._total_directions})")
+        self._update_time_label()
+        self._progress_timer.start()
 
         worker = CampaignWorker(
-            environment_path=Path(self._environment_edit.text()),
+            environment_path=environment_path,
             samples=self._samples_spin.value(),
             tolerance_cm=self._tolerance_spin.value(),
             review_threshold_cm=self._review_threshold_spin.value(),
@@ -129,6 +204,7 @@ class MainWindow(QMainWindow):
         )
         thread = start_worker(worker)
         worker.pair_measured.connect(self._model.add_result)
+        worker.pair_measured.connect(self._on_pair_progress)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(thread.quit)
@@ -137,7 +213,40 @@ class MainWindow(QMainWindow):
         self._worker = worker
         thread.start()
 
+    def _on_pair_progress(self, _result: PairResult) -> None:
+        self._completed_directions += 1
+        if self._total_directions:
+            pct = int(self._completed_directions / self._total_directions * 100)
+            self._progress_bar.setValue(pct)
+            self._progress_bar.setFormat(
+                f"%p% ({self._completed_directions}/{self._total_directions})"
+            )
+        self._update_time_label()
+
+    def _update_time_label(self) -> None:
+        if self._campaign_start is None:
+            return
+        elapsed = time.monotonic() - self._campaign_start
+        if self._completed_directions > 0 and self._total_directions:
+            # Estimacion adaptativa: promedio real de esta corrida (ya
+            # incluye cualquier reconexion que haya pasado hasta ahora),
+            # en vez del valor inicial fijo -- se auto-corrige a medida
+            # que avanza.
+            avg_s = elapsed / self._completed_directions
+            estimated_total = avg_s * self._total_directions
+        else:
+            estimated_total = self._initial_estimate_s
+        remaining = max(0.0, estimated_total - elapsed)
+        self._time_label.setText(
+            f"Transcurrido: {_format_duration(elapsed)} · "
+            f"Estimado total: {_format_duration(estimated_total)} · "
+            f"Restante: {_format_duration(remaining)}"
+        )
+
     def _on_finished(self, results: list[PairResult], json_path: Path, md_path: Path) -> None:
+        self._progress_timer.stop()
+        self._update_time_label()
+        self._progress_bar.setValue(100)
         self._run_btn.setEnabled(True)
         pass_n = sum(1 for r in results if r.estado == "PASS")
         fail_n = sum(1 for r in results if r.estado == "FAIL")
@@ -149,5 +258,6 @@ class MainWindow(QMainWindow):
         self._report_label.setText(f"Reportes: {json_path} · {md_path}")
 
     def _on_failed(self, message: str) -> None:
+        self._progress_timer.stop()
         self._run_btn.setEnabled(True)
         self._status_label.setText(f"Error: {message}")
