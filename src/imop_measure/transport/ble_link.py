@@ -90,6 +90,12 @@ _BRIDGE_TIMEOUT_MARKER = "Error: sin respuesta del modulo Qorvo"
 # forma confiable (verificado en el repo hermano).
 _POWER_ON_SETTLE_S = 3.0
 
+# Tiempo de espera entre "qorvo off" y "qorvo on" en power_cycle(), para
+# asegurar que el modulo pierda de verdad su estado DS-TWR interno antes de
+# volver a encenderlo (pedido explicito del usuario, ver docstring de
+# power_cycle()).
+_POWER_CYCLE_OFF_SETTLE_S = 2.0
+
 # El backend WinRT de bleak (bluetooth en Windows) tiene fallas de conexion
 # transitorias y conocidas, sin arreglo de fondo en bleak todavia (ver
 # docs/protocolo-ble-qorvo.md, seccion "Fallas conocidas del backend BLE
@@ -169,6 +175,7 @@ class BleTransport:
         write_timeout_s: float = 5.0,
         power_on_settle_s: float = _POWER_ON_SETTLE_S,
         power_drain_s: float = 2.0,
+        power_cycle_off_settle_s: float = _POWER_CYCLE_OFF_SETTLE_S,
         connect_retry_attempts: int = _CONNECT_RETRY_ATTEMPTS,
         connect_retry_backoff_s: float = _CONNECT_RETRY_BACKOFF_S,
         _client_factory: Callable[..., _BleakClientLike] | None = None,
@@ -182,6 +189,7 @@ class BleTransport:
         self._write_timeout_s = write_timeout_s
         self._power_on_settle_s = power_on_settle_s
         self._power_drain_s = power_drain_s
+        self._power_cycle_off_settle_s = power_cycle_off_settle_s
         self._connect_retry_attempts = connect_retry_attempts
         self._connect_retry_backoff_s = connect_retry_backoff_s
         self._client_factory: Callable[..., _BleakClientLike] = _client_factory or cast(
@@ -354,6 +362,35 @@ class BleTransport:
         self._ensure_connected()
         self._run_coro(self._send_raw(text), timeout_s=self._write_timeout_s)
         self._drain_response()
+
+    def power_cycle(self) -> None:
+        """Apaga y vuelve a prender el modulo Qorvo (`qorvo off` + espera +
+        `qorvo on`), para garantizar un estado DS-TWR interno limpio antes
+        de arrancar una sesion nueva.
+
+        [Verificado 2026-09-10 contra hardware real]: reenviar `INITF` con
+        un `-PADDR=` distinto sobre un modulo que ya venia corriendo una
+        sesion anterior (solo `STOP` + `INITF` nuevo, sin apagarlo) **no
+        actualiza el peer** — el modulo sigue devolviendo `SESSION_INFO_NTF`
+        con el `mac_address`/distancia del primer respondedor contra el que
+        midio, para todos los destinos siguientes (reproducido de forma
+        consistente con UWB-Node-11 contra 3 respondedores distintos en la
+        misma conexion). Un power-cycle completo antes de cada direccion
+        nueva lo arregla (confirmado: los 3 destinos dieron el
+        `mac_address` correcto tras agregar este power-cycle). Ver
+        `ranging.pair_runner.run_directed_measurement`, que lo llama antes
+        de cada direccion tanto para el iniciador reusado como para el
+        respondedor recien conectado.
+
+        El streaming (`enable_stream`) no necesita reactivarse despues: es
+        estado de la sesion GATT (se apaga solo al caerse la conexion BLE),
+        no del encendido fisico del Qorvo — ver comentario junto a
+        `STREAM_SERVICE_UUID`.
+        """
+        self.power_off()
+        time.sleep(self._power_cycle_off_settle_s)
+        self.power_on()
+        time.sleep(self._power_on_settle_s)
 
     def enable_stream(self) -> None:
         """`qorvo stream on`: activa el streaming continuo de ranging por la

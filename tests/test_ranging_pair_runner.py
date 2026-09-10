@@ -118,6 +118,7 @@ def _make_factory(
             address,
             power_on_settle_s=0.0,
             power_drain_s=0.01,
+            power_cycle_off_settle_s=0.0,
             connect_retry_attempts=1,
             _client_factory=client_factory,
         )
@@ -144,6 +145,7 @@ def _make_factory_multi(fakes: dict[str, FakeBleakClient]) -> Callable[[str], Bl
             address,
             power_on_settle_s=0.0,
             power_drain_s=0.01,
+            power_cycle_off_settle_s=0.0,
             connect_retry_attempts=1,
             _client_factory=client_factory,
         )
