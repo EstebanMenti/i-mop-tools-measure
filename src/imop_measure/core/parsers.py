@@ -13,7 +13,14 @@ import json
 import re
 from typing import Any
 
-from imop_measure.core.models import CalKey, ChipId, DeviceInfo, Measurement
+from imop_measure.core.models import (
+    CalKey,
+    ChipId,
+    DeviceInfo,
+    Measurement,
+    RangeDiagnosticReport,
+    RangeDiagnostics,
+)
 
 # Prefijo del bloque JSON de STAT: "JS" + longitud en 4 digitos hex + "{...".
 # Sin ancla "^": el eco del comando puede llegar pegado sin separador
@@ -33,6 +40,19 @@ _SESSION_FIELDS = {
     "distance_cm": re.compile(r"distance\[cm\]=(-?\d+)"),
     "rssi_dbm": re.compile(r"RSSI\[dBm\]=(-?\d+(?:\.\d+)?)"),
 }
+
+# Prefijo de la notificacion de diagnostico por ronda (requiere `DIAG 1`
+# activo, ver `DwmCliClient.diag`). Un bloque trae varios reportes, uno por
+# mensaje del intercambio DS-TWR — verificado contra hardware real
+# 2026-09-10 (fw 1.1.0, `n_reports=6`: CONTROL, RANGING_INITIATION,
+# RANGING_RESPONSE, RANGING_FINAL, MEASUREMENT_REPORT, RESULT_REPORT).
+_RANGE_DIAG_PREFIX = "RANGE_DIAGNOSTICS_NTF"
+_DIAG_REPORT_RE = re.compile(
+    r"msg_id=(?P<msg_id>\w+),\s*action=(?P<action>\w+),\s*antenna_set=\d+,\s*"
+    r"frame_status=\{SUCCESS:\s*(?P<success>[01]),\s*WIFI_COEX:\s*(?P<coex>[01]),\s*"
+    r"GRANT_DURATION_EXCEEDED:\s*(?P<exceeded>[01])\},\s*"
+    r"cfo_present=(?P<cfo_present>[01])(?:,\s*cfo_ppm=(?P<cfo_ppm>-?\d+(?:\.\d+)?))?,\s*nb_aoa=\d+"
+)
 
 _DECAID_FIELDS = {
     "device_id": re.compile(r"Device ID\s*=\s*(\S+)"),
@@ -165,6 +185,34 @@ def parse_session_info(line: str) -> Measurement:
         rssi_dbm=float(rssi) if rssi is not None else None,
         raw=line,
     )
+
+
+def parse_range_diagnostics(text: str) -> RangeDiagnostics:
+    """Parsea una notificacion `RANGE_DIAGNOSTICS_NTF` (requiere `DIAG 1`).
+
+    [Por verificar en hardware]: el bloque no trae numero de
+    secuencia/ronda propio, asi que la asociacion con la `SESSION_INFO_NTF`
+    de la misma ronda es por orden de llegada — ver
+    `DwmCliClient.read_notifications`.
+    """
+    if not text.strip().startswith(_RANGE_DIAG_PREFIX):
+        raise ValueError(f"No es una notificacion {_RANGE_DIAG_PREFIX}: {text!r}")
+    reports = tuple(
+        RangeDiagnosticReport(
+            msg_id=match.group("msg_id"),
+            action=match.group("action"),
+            frame_success=match.group("success") == "1",
+            wifi_coex=match.group("coex") == "1",
+            grant_duration_exceeded=match.group("exceeded") == "1",
+            cfo_present=match.group("cfo_present") == "1",
+            cfo_ppm=float(match.group("cfo_ppm")) if match.group("cfo_ppm") is not None else None,
+            raw=match.group(0),
+        )
+        for match in _DIAG_REPORT_RE.finditer(text)
+    )
+    if not reports:
+        raise ValueError(f"{_RANGE_DIAG_PREFIX} sin reportes reconocibles: {text!r}")
+    return RangeDiagnostics(reports=reports, raw=text)
 
 
 def parse_decaid(lines: list[str]) -> ChipId:

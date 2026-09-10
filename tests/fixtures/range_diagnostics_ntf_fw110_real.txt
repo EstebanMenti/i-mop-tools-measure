@@ -1,0 +1,13 @@
+RANGE_DIAGNOSTICS_NTF: {n_reports=6
+
+ [msg_id=CONTROL, action=TX, antenna_set=0, frame_status={SUCCESS: 1, WIFI_COEX: 0, GRANT_DURATION_EXCEEDED: 0}, cfo_present=0, nb_aoa=0];
+
+ [msg_id=RANGING_INITIATION, action=TX, antenna_set=0, frame_status={SUCCESS: 1, WIFI_COEX: 0, GRANT_DURATION_EXCEEDED: 0}, cfo_present=0, nb_aoa=0];
+
+ [msg_id=RANGING_RESPONSE, action=RX, antenna_set=0, frame_status={SUCCESS: 1, WIFI_COEX: 0, GRANT_DURATION_EXCEEDED: 0}, cfo_present=1, cfo_ppm=-1.17, nb_aoa=0];
+
+ [msg_id=RANGING_FINAL, action=TX, antenna_set=0, frame_status={SUCCESS: 1, WIFI_COEX: 0, GRANT_DURATION_EXCEEDED: 0}, cfo_present=0, nb_aoa=0];
+
+ [msg_id=MEASUREMENT_REPORT, action=TX, antenna_set=0, frame_status={SUCCESS: 1, WIFI_COEX: 0, GRANT_DURATION_EXCEEDED: 0}, cfo_present=0, nb_aoa=0];
+
+ [msg_id=RESULT_REPORT, action=RX, antenna_set=0, frame_status={SUCCESS: 1, WIFI_COEX: 0, GRANT_DURATION_EXCEEDED: 0}, cfo_present=1, cfo_ppm=0.94, nb_aoa=0]}

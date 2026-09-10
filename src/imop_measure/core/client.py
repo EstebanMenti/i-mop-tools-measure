@@ -22,13 +22,15 @@ import logging
 import re
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 
-from imop_measure.core.models import CalKey, ChipId, DeviceInfo, Measurement
+from imop_measure.core.models import CalKey, ChipId, DeviceInfo, Measurement, RangeDiagnostics
 from imop_measure.core.parsers import (
     is_ok,
     parse_calkey_line,
     parse_decaid,
     parse_listcal,
+    parse_range_diagnostics,
     parse_session_info,
     parse_stat,
 )
@@ -73,6 +75,17 @@ _CLI_COMMAND_WORDS = {
 # Tras STOP, el firmware tarda un instante en volver a NONE: un STAT
 # inmediato aun reporta la app anterior corriendo.
 _STOP_SETTLE_S = 0.3
+
+# Prefijos de notificacion reconocidos en el canal de stream (ver
+# read_notifications). RANGE_DIAGNOSTICS_NTF solo llega con DIAG 1 activo
+# y, verificado contra hardware real 2026-09-10, precede a la
+# SESSION_INFO_NTF de la misma ronda (no trae numero de ronda propio).
+_SESSION_NTF_PREFIX = "SESSION_INFO_NTF"
+_RANGE_DIAG_NTF_PREFIX = "RANGE_DIAGNOSTICS_NTF"
+# Un bloque RANGE_DIAGNOSTICS_NTF (6 reportes en la practica) ocupa muchas
+# mas lineas de fragmento que un SESSION_INFO_NTF — margen generoso para no
+# descartarlo como "inconcluso" antes de tiempo.
+_MAX_FRAGMENT_LINES = 40
 _PRFSETS = {"BPRF3", "BPRF4", "BPRF5", "BPRF6"}
 _RRUS = {"SSTWR", "DSTWR", "SSTWRNDEF", "DSTWRNDEF"}
 _VUPPER_RE = re.compile(r"^([0-9A-Fa-f]{2}:){7}[0-9A-Fa-f]{2}$")
@@ -519,15 +532,25 @@ class DwmCliClient:
         se ignoran; las notificaciones mal formadas se loguean y se
         descartan.
 
-        Cada `SESSION_INFO_NTF` llega partida en dos lineas (la
-        continuacion arranca con un `\\r` residual); se reensambla
-        acumulando lineas hasta balancear las llaves `{}`.
+        Cada notificacion llega partida en varias lineas (la continuacion
+        arranca con un `\\r` residual); se reensambla acumulando lineas
+        hasta balancear las llaves `{}`.
+
+        Con `DIAG 1` activo (ver `diag`), tambien llega una notificacion
+        `RANGE_DIAGNOSTICS_NTF` por ronda — verificado contra hardware real
+        2026-09-10, precede a la `SESSION_INFO_NTF` de esa misma ronda. Se
+        parsea y se adjunta como `Measurement.diagnostics` a la siguiente
+        medicion (no trae numero de ronda propio para emparejarla de otra
+        forma, ver `parse_range_diagnostics`); si DIAG esta apagado nunca
+        llega y `diagnostics` queda en `None`.
         """
         if duration_s is None and max_count is None:
             raise ValueError("Indicar duration_s y/o max_count")
         deadline = None if duration_s is None else time.monotonic() + duration_s
         measurements: list[Measurement] = []
         fragment: list[str] = []
+        fragment_is_diagnostics = False
+        pending_diagnostics: RangeDiagnostics | None = None
         while True:
             if max_count is not None and len(measurements) >= max_count:
                 break
@@ -539,26 +562,39 @@ class DwmCliClient:
                     break
                 continue
             stripped = line.strip()
-            if stripped.startswith("SESSION_INFO_NTF"):
+            if stripped.startswith(_SESSION_NTF_PREFIX):
                 fragment = [stripped]
+                fragment_is_diagnostics = False
+            elif stripped.startswith(_RANGE_DIAG_NTF_PREFIX):
+                fragment = [stripped]
+                fragment_is_diagnostics = True
             elif fragment:
                 fragment.append(stripped)
             else:
                 continue
             joined = " ".join(fragment)
             if joined.count("{") > joined.count("}"):
-                if len(fragment) > 8:
+                if len(fragment) > _MAX_FRAGMENT_LINES:
                     logger.warning(
                         "Notificacion inconclusa descartada en %s: %r", self.name, joined
                     )
                     fragment = []
                 continue
             fragment = []
+            if fragment_is_diagnostics:
+                try:
+                    pending_diagnostics = parse_range_diagnostics(joined)
+                except ValueError:
+                    logger.warning("Diagnostico no parseable en %s: %r", self.name, joined)
+                continue
             try:
                 measurement = parse_session_info(joined)
             except ValueError:
                 logger.warning("Notificacion no parseable en %s: %r", self.name, joined)
                 continue
+            if pending_diagnostics is not None:
+                measurement = replace(measurement, diagnostics=pending_diagnostics)
+                pending_diagnostics = None
             measurements.append(measurement)
             if on_measurement is not None:
                 on_measurement(measurement)
