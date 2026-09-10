@@ -142,15 +142,34 @@ por el timeout de inactividad de ~7-8s. `ranging.pair_runner` (función
 el muestreo, bien por debajo de ese umbral, para mantener el enlace vivo
 sin tocar la app `RESPF` en curso.
 
-> **[Verificado 2026-09-08 contra hardware real]:** consultar `STAT` (una
-> consulta de solo lectura) mientras `RESPF` está activo **no interrumpe
-> ni degrada** la sesión de ranging en curso — se corrieron 3 campañas
-> completas contra los 4 nodos reales de `environments/sala_20.toml` (12
-> direcciones cada una) con este keepalive activo: 30/30 muestras
-> `SUCCESS` en las 36 mediciones totales, cero errores de conexión. Antes
-> de este keepalive, el enlace del respondedor se desconectaba solo
-> durante el muestreo y 2 de 6 direcciones terminaban en `0/30 SUCCESS`
-> (ver `reports/medicion-20-20260908-084928.md`).
+> **[Por verificar en hardware — verificación 2026-09-08 obsoleta]:** la
+> verificación original de que `STAT` "no interrumpe ni degrada" la sesión
+> (3 campañas completas, 30/30 en 36 direcciones, cero errores de conexión)
+> se hizo el 2026-09-08, **un día antes** de que existiera el canal
+> dedicado de streaming (`I-mop-nrf52840-fw` v0.3.0, 2026-09-09 — ver
+> sección 2). En ese momento las notificaciones todavía viajaban por el
+> canal de comandos compartido (ráfagas acotadas por la ventana de 8s), no
+> por el canal "Qorvo Stream" actual — es decir, la cifra "cero errores"
+> describe una arquitectura de lectura que ya no está en uso. El
+> razonamiento de que el STAT ya no compite con las notificaciones (canales
+> BLE separados desde v0.3.0, ver sección 4) es válido a nivel de diseño,
+> pero no fue re-confirmado con una campaña de hardware real equivalente
+> tras la migración.
+>
+> **[Verificado 2026-09-10 contra hardware real, firmware puente v0.3.1]:**
+> prueba A/B controlada (keepalive ON/OFF alternado, mismas 4 direcciones,
+> 2 corridas por condición, 30 muestras cada una) contra
+> `environments/sala_20.toml`: **sin diferencia medible** entre tener el
+> keepalive activo o no — desvío estándar promedio 3.08cm (ON) vs 3.68cm
+> (OFF) sobre las corridas exitosas, y la misma tasa de fallas de conexión
+> BLE en ambas condiciones (2/8 cada una, mismo error transitorio de
+> Windows `WinError -2147023673` visto en general durante toda la sesión de
+> pruebas, no asociado al keepalive). El salto de distancia bimodal descrito
+> en el historial de este archivo (ver `reports/` de mediciones reales) no
+> se reprodujo en ninguna de las 16 corridas, con o sin keepalive — se
+> descarta como causa. La muestra es más chica que la verificación
+> obsoleta del 08/09 (16 corridas vs 36), pero es la única contra el
+> firmware actual; ampliarla si se necesita más confianza.
 
 ## 4. Lectura de la distancia medida
 
