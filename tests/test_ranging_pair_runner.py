@@ -187,6 +187,37 @@ def test_run_pair_all_success() -> None:
     assert result.mean_cm == pytest.approx(201.0)
 
 
+def test_run_pair_on_status_reports_each_step() -> None:
+    """`on_status` es puramente informativo (para progreso en vivo en la
+    GUI, ver gui/worker.py) -- no cambia el comportamiento de la medicion,
+    solo notifica los pasos en el orden en que ocurren.
+    """
+    script_a, script_b = _base_scripts()
+    script_a[RESPF_COMMAND] = [b"ok\r\n"]
+    script_b[INITF_COMMAND] = [b"ok\r\n", *_ntf_fragments(0, distance_cm=200)]
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+    messages: list[str] = []
+
+    result = run_pair(
+        initiator=ANCHOR_B,
+        responder=ANCHOR_A,
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=_make_factory(fake_a, fake_b),
+        on_status=messages.append,
+    )
+
+    assert result.error is None
+    assert messages == [
+        "Conectando a UWB-Node-B...",
+        "Conectando a UWB-Node-A...",
+        "Configurando UWB-Node-B y UWB-Node-A...",
+        "Midiendo distancia: UWB-Node-B -> UWB-Node-A...",
+    ]
+
+
 def test_run_pair_mixed_success_and_timeout() -> None:
     script_a, script_b = _base_scripts()
     script_a[RESPF_COMMAND] = [b"ok\r\n"]

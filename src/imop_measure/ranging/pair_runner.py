@@ -74,6 +74,16 @@ _OPEN_RETRY_ATTEMPTS = 4
 _OPEN_RETRY_BACKOFF_S = 3.0
 
 _TransportFactory = Callable[[str], BleTransport]
+_StatusCallback = Callable[[str], None]
+
+
+def _emit(on_status: _StatusCallback | None, message: str) -> None:
+    """Notifica `message` por `on_status` si se paso uno (ver docstring de
+    `run_pair`) — puramente informativo, no cambia el comportamiento de la
+    medicion. Pensado para mostrar progreso en vivo en la GUI (Fase F7),
+    igual criterio que `on_pair_done`/`on_measurement`."""
+    if on_status is not None:
+        on_status(message)
 
 
 @dataclass(frozen=True)
@@ -126,6 +136,7 @@ def _open_and_confirm_none(
     *,
     command_timeout_s: float,
     label: str,
+    on_status: _StatusCallback | None = None,
 ) -> tuple[BleTransport, DwmCliClient]:
     """Conecta `address` (`transport.open()`) y confirma modo `NONE`
     (`ensure_mode_none()`), reintentando ante una falla transitoria (ver
@@ -142,12 +153,14 @@ def _open_and_confirm_none(
     `_safe_power_off`, justo el apuro que puede volver a fallar contra un
     dispositivo que recien se desconecto).
 
-    `label` es solo para el log de reintento (nombre del ancla).
+    `label` es solo para el log de reintento (nombre del ancla) y para los
+    mensajes de `on_status` (ver `run_pair`).
 
     Raises:
         MeasureError: si ningun intento logro conectar o confirmar modo
             `NONE`.
     """
+    _emit(on_status, f"Conectando a {label}...")
     last_error: MeasureError | None = None
     for attempt in range(1, _OPEN_RETRY_ATTEMPTS + 1):
         transport = make_transport(address)
@@ -185,6 +198,7 @@ def open_initiator(
     *,
     ble_timeouts: Mapping[str, float],
     _transport_factory: _TransportFactory | None = None,
+    on_status: _StatusCallback | None = None,
 ) -> InitiatorHandle:
     """Conecta `initiator` y lo deja en modo `NONE`, listo para medir
     contra varios respondedores en secuencia sin reconectar (ver
@@ -201,7 +215,11 @@ def open_initiator(
     make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
     command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
     transport, client = _open_and_confirm_none(
-        make_transport, initiator.mac, command_timeout_s=command_timeout_s, label=initiator.nombre
+        make_transport,
+        initiator.mac,
+        command_timeout_s=command_timeout_s,
+        label=initiator.nombre,
+        on_status=on_status,
     )
     return InitiatorHandle(anchor=initiator, transport=transport, client=client)
 
@@ -225,6 +243,7 @@ def run_directed_measurement(
     n_samples: int,
     ble_timeouts: Mapping[str, float],
     _transport_factory: _TransportFactory | None = None,
+    on_status: _StatusCallback | None = None,
 ) -> MeasuredPair:
     """Mide una direccion contra `responder`, reusando la conexion ya
     abierta de `initiator_handle` (ver `open_initiator`).
@@ -271,7 +290,9 @@ def run_directed_measurement(
             responder.mac,
             command_timeout_s=command_timeout_s,
             label=responder.nombre,
+            on_status=on_status,
         )
+        _emit(on_status, f"Configurando {initiator.nombre} y {responder.nombre}...")
         # Power-cycle del respondedor recien conectado, para el mismo
         # motivo que el del iniciador (ver docstring arriba) — belt and
         # suspenders, aunque ya es una conexion fresca.
@@ -294,6 +315,7 @@ def run_directed_measurement(
         client_resp.start_respf(**responder_kwargs(session, addr=addr_resp, paddr=addr_init))
         client_init.start_initf(**initiator_kwargs(session, addr=addr_init, paddr=addr_resp))
 
+        _emit(on_status, f"Midiendo distancia: {initiator.nombre} -> {responder.nombre}...")
         successes = _collect_success_samples(
             client_init, session=session, n_samples=n_samples, keepalive_client=client_resp
         )
@@ -329,6 +351,7 @@ def run_pair(
     n_samples: int,
     ble_timeouts: Mapping[str, float],
     _transport_factory: _TransportFactory | None = None,
+    on_status: _StatusCallback | None = None,
 ) -> MeasuredPair:
     """Mide una sola direccion de punta a punta: conecta al iniciador,
     mide contra `responder`, y desconecta al iniciador.
@@ -343,10 +366,18 @@ def run_pair(
     muestras SUCCESS) se refleja en `MeasuredPair.error`, para que un par
     fallido no aborte una campaña de medición completa (ver
     `ranging/campaign.py`, Fase F4).
+
+    `on_status`, si se pasa, se invoca con mensajes legibles del paso en
+    curso ("Conectando a...", "Configurando...", "Midiendo distancia...")
+    — puramente informativo, pensado para mostrar progreso en vivo en la
+    GUI (ver `gui/worker.py`); no afecta el comportamiento de la medición.
     """
     try:
         handle = open_initiator(
-            initiator, ble_timeouts=ble_timeouts, _transport_factory=_transport_factory
+            initiator,
+            ble_timeouts=ble_timeouts,
+            _transport_factory=_transport_factory,
+            on_status=on_status,
         )
     except MeasureError as exc:
         logger.warning(
@@ -364,6 +395,7 @@ def run_pair(
             n_samples=n_samples,
             ble_timeouts=ble_timeouts,
             _transport_factory=_transport_factory,
+            on_status=on_status,
         )
     finally:
         close_initiator(handle)

@@ -124,6 +124,27 @@ def test_run_campaign_unexpected_exception_does_not_abort_campaign() -> None:
     assert all(r.error is None for r in other_results)
 
 
+def test_run_campaign_forwards_on_status_to_run_pair() -> None:
+    anchors = [_anchor("a"), _anchor("b")]
+    captured_callbacks: list[object] = []
+
+    def capture(
+        *, initiator: Anchor, responder: Anchor, on_status: object = None, **_kwargs: object
+    ) -> MeasuredPair:
+        captured_callbacks.append(on_status)
+        return _fake_measurement(initiator=initiator, responder=responder)
+
+    def my_on_status(_message: str) -> None:
+        pass
+
+    with patch("imop_measure.ranging.campaign.run_pair", side_effect=capture):
+        campaign.run_campaign(
+            _ambiente(anchors), session=SessionParams(), n_samples=1, on_status=my_on_status
+        )
+
+    assert captured_callbacks == [my_on_status, my_on_status]
+
+
 def test_run_campaign_calls_on_pair_done_callback() -> None:
     anchors = [_anchor("a"), _anchor("b")]
     seen: list[MeasuredPair] = []

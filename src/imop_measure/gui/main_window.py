@@ -105,6 +105,10 @@ class MainWindow(QMainWindow):
         self._time_label = QLabel("")
         layout.addWidget(self._time_label)
 
+        self._action_label = QLabel("")
+        self._action_label.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(self._action_label)
+
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(1000)
         self._progress_timer.timeout.connect(self._update_time_label)
@@ -190,6 +194,7 @@ class MainWindow(QMainWindow):
         self._run_btn.setEnabled(False)
         self._status_label.setText("Midiendo…")
         self._report_label.setText("")
+        self._action_label.setText("")
         self._progress_bar.setValue(0)
         self._progress_bar.setFormat(f"%p% (0/{self._total_directions})")
         self._update_time_label()
@@ -205,6 +210,7 @@ class MainWindow(QMainWindow):
         thread = start_worker(worker)
         worker.pair_measured.connect(self._model.add_result)
         worker.pair_measured.connect(self._on_pair_progress)
+        worker.status_update.connect(self._action_label.setText)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(thread.quit)
@@ -248,6 +254,7 @@ class MainWindow(QMainWindow):
         self._update_time_label()
         self._progress_bar.setValue(100)
         self._run_btn.setEnabled(True)
+        self._action_label.setText("")
         pass_n = sum(1 for r in results if r.estado == "PASS")
         fail_n = sum(1 for r in results if r.estado == "FAIL")
         error_n = sum(1 for r in results if r.estado == "ERROR")
@@ -260,4 +267,5 @@ class MainWindow(QMainWindow):
     def _on_failed(self, message: str) -> None:
         self._progress_timer.stop()
         self._run_btn.setEnabled(True)
+        self._action_label.setText("")
         self._status_label.setText(f"Error: {message}")

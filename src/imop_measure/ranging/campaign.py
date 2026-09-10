@@ -20,6 +20,7 @@ def run_campaign(
     session: SessionParams,
     n_samples: int,
     on_pair_done: Callable[[MeasuredPair], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> list[MeasuredPair]:
     """Mide la distancia real en ambas direcciones entre todos los nodos del ambiente.
 
@@ -53,7 +54,9 @@ def run_campaign(
 
     `on_pair_done`, si se pasa, se invoca con cada `MeasuredPair` apenas
     está listo (pensado para mostrar progreso en vivo desde la GUI, Fase
-    F7).
+    F7). `on_status`, si se pasa, se invoca con mensajes legibles del paso
+    en curso dentro de cada dirección (ver `pair_runner.run_pair`) —
+    puramente informativo, no cambia el comportamiento de la medición.
     """
     results: list[MeasuredPair] = []
     for initiator, responder in _directed_pairs(ambiente.anchors):
@@ -64,6 +67,7 @@ def run_campaign(
                 session=session,
                 n_samples=n_samples,
                 ble_timeouts=ambiente.ble_timeouts,
+                on_status=on_status,
             )
         except Exception as exc:
             # Exception generica, no MeasureError: un bug aca (no solo una
