@@ -11,4 +11,4 @@ implementacion.
 # PyInstaller (ver packaging/imop-measure-gui.spec) no incluye el
 # .dist-info del propio proyecto, solo el de sus dependencias -- leerlo en
 # tiempo de ejecucion fallaria en el ejecutable distribuido.
-__version__ = "0.1.0"
+__version__ = "0.1.1"
