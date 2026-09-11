@@ -94,6 +94,50 @@ def test_worker_emits_pair_measured_and_finished(qtbot: object, tmp_path: Path) 
     assert Path(md_path).exists()  # type: ignore[arg-type]
 
 
+def test_worker_one_to_many_flag_uses_one_to_many_campaign(qtbot: object, tmp_path: Path) -> None:
+    """`one_to_many=True` debe llamar `run_campaign_one_to_many`, no
+    `run_campaign` -- puramente de enrutamiento, mismo criterio que
+    `app/cli.py --one-to-many` (ver test_app_cli.py)."""
+    ambiente = _ambiente()
+
+    def fake_run_campaign_one_to_many(
+        amb: Ambiente,
+        *,
+        session: object,
+        n_samples: int,
+        on_pair_done: Callable[[MeasuredPair], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
+    ) -> list[MeasuredPair]:
+        result = _fake_measured(initiator=amb.anchors[0], responder=amb.anchors[1])
+        if on_pair_done is not None:
+            on_pair_done(result)
+        return [result]
+
+    worker = CampaignWorker(
+        environment_path=tmp_path / "sala_99.toml",
+        samples=1,
+        tolerance_cm=5.0,
+        report_dir=tmp_path,
+        one_to_many=True,
+    )
+    finished_calls: list[object] = []
+    worker.finished.connect(lambda *args: finished_calls.append(args))
+
+    with (
+        patch("imop_measure.gui.worker.load_ambiente", return_value=ambiente),
+        patch(
+            "imop_measure.gui.worker.run_campaign_one_to_many",
+            side_effect=fake_run_campaign_one_to_many,
+        ) as mock_one_to_many,
+        patch("imop_measure.gui.worker.run_campaign") as mock_default,
+    ):
+        worker.run()
+
+    assert len(finished_calls) == 1
+    mock_one_to_many.assert_called_once()
+    mock_default.assert_not_called()
+
+
 def test_worker_emits_failed_on_missing_environment_file(qtbot: object, tmp_path: Path) -> None:
     # Sin mockear load_ambiente: un archivo inexistente levanta
     # FileNotFoundError (no ConfigError) — confirma que `except Exception`

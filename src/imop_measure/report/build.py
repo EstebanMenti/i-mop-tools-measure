@@ -48,10 +48,10 @@ def _build_one(measured: MeasuredPair, *, tolerance_cm: float) -> PairResult:
             n_samples_requested=measured.n_requested,
             estado="ERROR",
             detalle=measured.error,
-            std_measured_cm=None,
-            min_measured_cm=None,
-            max_measured_cm=None,
-            mode_measured_cm=None,
+            std_measured_m=None,
+            min_measured_m=None,
+            max_measured_m=None,
+            mode_measured_m=None,
         )
 
     distance_measured_m = measured.mean_cm / 100.0
@@ -76,8 +76,8 @@ def _build_one(measured: MeasuredPair, *, tolerance_cm: float) -> PairResult:
         # caso measured.mean_cm tambien seria None y ya habriamos vuelto
         # arriba — queda explicito por si ese invariante cambia.
         detalle=measured.error,
-        std_measured_cm=measured.std_cm,
-        min_measured_cm=float(min(samples)),
-        max_measured_cm=float(max(samples)),
-        mode_measured_cm=float(statistics.mode(samples)),
+        std_measured_m=measured.std_cm / 100.0 if measured.std_cm is not None else None,
+        min_measured_m=min(samples) / 100.0,
+        max_measured_m=max(samples) / 100.0,
+        mode_measured_m=statistics.mode(samples) / 100.0,
     )

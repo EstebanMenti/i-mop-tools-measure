@@ -14,11 +14,11 @@ _HEADERS = (
     "Iniciador",
     "Respondedor",
     "Calculada (m)",
-    "Medida (m)",
-    "Mínimo (cm)",
-    "Máximo (cm)",
-    "Moda (cm)",
-    "Desviación (cm)",
+    "Promedio (m)",
+    "Mínimo (m)",
+    "Máximo (m)",
+    "Moda (m)",
+    "Desviación (m)",
     "Diferencia (m)",
     "Diferencia (%)",
     "Estado",
@@ -144,13 +144,13 @@ def _display_value(result: PairResult, column: int) -> str | None:
             return "-"
         return f"{result.distance_measured_m:.3f}"
     if column == 4:
-        return f"{result.min_measured_cm:.1f}" if result.min_measured_cm is not None else "-"
+        return f"{result.min_measured_m:.3f}" if result.min_measured_m is not None else "-"
     if column == 5:
-        return f"{result.max_measured_cm:.1f}" if result.max_measured_cm is not None else "-"
+        return f"{result.max_measured_m:.3f}" if result.max_measured_m is not None else "-"
     if column == 6:
-        return f"{result.mode_measured_cm:.1f}" if result.mode_measured_cm is not None else "-"
+        return f"{result.mode_measured_m:.3f}" if result.mode_measured_m is not None else "-"
     if column == 7:
-        return f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
+        return f"{result.std_measured_m:.3f}" if result.std_measured_m is not None else "-"
     if column == 8:
         return f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
     if column == 9:

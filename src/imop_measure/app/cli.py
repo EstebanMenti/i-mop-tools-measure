@@ -122,11 +122,11 @@ def _print_summary(results: list[PairResult]) -> None:
     table = Table(title="Resumen de medición")
     table.add_column("Dirección")
     table.add_column("Calculada (m)", justify="right")
-    table.add_column("Medida (m)", justify="right")
-    table.add_column("Mínimo (cm)", justify="right")
-    table.add_column("Máximo (cm)", justify="right")
-    table.add_column("Moda (cm)", justify="right")
-    table.add_column("Desviación (cm)", justify="right")
+    table.add_column("Promedio (m)", justify="right")
+    table.add_column("Mínimo (m)", justify="right")
+    table.add_column("Máximo (m)", justify="right")
+    table.add_column("Moda (m)", justify="right")
+    table.add_column("Desviación (m)", justify="right")
     table.add_column("Diferencia (m)", justify="right")
     table.add_column("Diferencia (%)", justify="right")
     table.add_column("Estado")
@@ -134,10 +134,10 @@ def _print_summary(results: list[PairResult]) -> None:
         medida = (
             f"{result.distance_measured_m:.3f}" if result.distance_measured_m is not None else "-"
         )
-        minimo = f"{result.min_measured_cm:.1f}" if result.min_measured_cm is not None else "-"
-        maximo = f"{result.max_measured_cm:.1f}" if result.max_measured_cm is not None else "-"
-        moda = f"{result.mode_measured_cm:.1f}" if result.mode_measured_cm is not None else "-"
-        desviacion = f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
+        minimo = f"{result.min_measured_m:.3f}" if result.min_measured_m is not None else "-"
+        maximo = f"{result.max_measured_m:.3f}" if result.max_measured_m is not None else "-"
+        moda = f"{result.mode_measured_m:.3f}" if result.mode_measured_m is not None else "-"
+        desviacion = f"{result.std_measured_m:.3f}" if result.std_measured_m is not None else "-"
         diff_m = f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
         diff_pct = f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
         estilo = {"PASS": "green", "FAIL": "yellow", "ERROR": "red"}[result.estado]

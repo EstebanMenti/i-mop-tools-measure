@@ -30,17 +30,20 @@ class PairResult:
     (`estado="ERROR"`), para que el reporte pueda mostrar por que sin
     tener que recorrer los `MeasuredPair` originales por separado.
 
-    `std_measured_cm`/`min_measured_cm`/`max_measured_cm`/
-    `mode_measured_cm` describen la dispersion de las muestras
-    `distance_cm_samples` de esa direccion entre si — no confundir con
-    `diff_m`/`diff_pct` (que comparan el *promedio* medido contra la
-    distancia calculada). Dos direcciones pueden tener el mismo `diff_m`
-    con dispersion muy distinta: una con todas las muestras muy juntas
-    (confiable aunque este lejos de lo calculado) y otra con muestras muy
-    dispersas (sospechosa aunque el promedio de casualidad caiga cerca).
-    `mode_measured_cm` es la moda (valor mas frecuente); ante empate,
-    `statistics.mode` devuelve el primero encontrado en las muestras.
-    Los cuatro son `None` si no se junto ninguna muestra (`estado="ERROR"`).
+    `std_measured_m`/`min_measured_m`/`max_measured_m`/`mode_measured_m`
+    describen la dispersion de las muestras `distance_cm_samples` de esa
+    direccion entre si (convertidas a metros, igual unidad que
+    `distance_calc_m`/`distance_measured_m`/`diff_m` — para poder
+    comparar todas las columnas de distancia de un vistazo, sin mezclar
+    cm y m) — no confundir con `diff_m`/`diff_pct` (que comparan el
+    *promedio* medido contra la distancia calculada). Dos direcciones
+    pueden tener el mismo `diff_m` con dispersion muy distinta: una con
+    todas las muestras muy juntas (confiable aunque este lejos de lo
+    calculado) y otra con muestras muy dispersas (sospechosa aunque el
+    promedio de casualidad caiga cerca). `mode_measured_m` es la moda
+    (valor mas frecuente); ante empate, `statistics.mode` devuelve el
+    primero encontrado en las muestras. Los cuatro son `None` si no se
+    junto ninguna muestra (`estado="ERROR"`).
     """
 
     initiator: str
@@ -53,7 +56,7 @@ class PairResult:
     n_samples_requested: int
     estado: Estado
     detalle: str | None = None
-    std_measured_cm: float | None = None
-    min_measured_cm: float | None = None
-    max_measured_cm: float | None = None
-    mode_measured_cm: float | None = None
+    std_measured_m: float | None = None
+    min_measured_m: float | None = None
+    max_measured_m: float | None = None
+    mode_measured_m: float | None = None
