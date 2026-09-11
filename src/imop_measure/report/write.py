@@ -121,8 +121,8 @@ def _render_resumen_table(resumen: dict[str, int]) -> list[str]:
 
 def _render_detalle_table(results: list[PairResult]) -> list[str]:
     lines = [
-        "| # | Dirección | Calculada (m) | Promedio (m) | Mínimo (m) | Máximo (m) | "
-        "Moda (m) | Desviación (m) | Diferencia (m) | Diferencia (%) | Estado |",
+        "| # | Dirección | Calculada (m) | Promedio (m) | Moda (m) | Mínimo (m) | "
+        "Máximo (m) | Desviación (m) | Diferencia (m) | Diferencia (%) | Estado |",
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i, result in enumerate(results, start=1):
@@ -141,8 +141,8 @@ def _render_row(result: PairResult) -> str:
     icono = _ESTADO_ICONO[result.estado]
     return (
         f"{direccion} | {result.distance_calc_m:.3f} | {_fmt_m(result.distance_measured_m)} | "
-        f"{_fmt_m(result.min_measured_m)} | {_fmt_m(result.max_measured_m)} | "
-        f"{_fmt_m(result.mode_measured_m)} | {_fmt_m(result.std_measured_m)} | "
+        f"{_fmt_m(result.mode_measured_m)} | {_fmt_m(result.min_measured_m)} | "
+        f"{_fmt_m(result.max_measured_m)} | {_fmt_m(result.std_measured_m)} | "
         f"{diff_m} | {diff_pct} | {icono} {result.estado}"
     )
 

@@ -15,9 +15,9 @@ _HEADERS = (
     "Respondedor",
     "Calculada (m)",
     "Promedio (m)",
+    "Moda (m)",
     "Mínimo (m)",
     "Máximo (m)",
-    "Moda (m)",
     "Desviación (m)",
     "Diferencia (m)",
     "Diferencia (%)",
@@ -40,11 +40,11 @@ _HEADER_TOOLTIPS = (
     "Igual en ambas direcciones de un mismo<br>"
     "par de nodos.",
     "Promedio de las muestras SUCCESS<br>medidas por UWB en esta dirección.",
-    "Valor mínimo entre las muestras<br>SUCCESS de esta dirección.",
-    "Valor máximo entre las muestras<br>SUCCESS de esta dirección.",
     "Valor más frecuente (moda) entre las<br>"
     "muestras SUCCESS de esta dirección —<br>"
     "ante empate, el primero encontrado.",
+    "Valor mínimo entre las muestras<br>SUCCESS de esta dirección.",
+    "Valor máximo entre las muestras<br>SUCCESS de esta dirección.",
     "Desviación estándar de las muestras<br>"
     "individuales entre sí (dispersión) —<br>"
     "NO es la diferencia contra la distancia<br>"
@@ -144,11 +144,11 @@ def _display_value(result: PairResult, column: int) -> str | None:
             return "-"
         return f"{result.distance_measured_m:.3f}"
     if column == 4:
-        return f"{result.min_measured_m:.3f}" if result.min_measured_m is not None else "-"
-    if column == 5:
-        return f"{result.max_measured_m:.3f}" if result.max_measured_m is not None else "-"
-    if column == 6:
         return f"{result.mode_measured_m:.3f}" if result.mode_measured_m is not None else "-"
+    if column == 5:
+        return f"{result.min_measured_m:.3f}" if result.min_measured_m is not None else "-"
+    if column == 6:
+        return f"{result.max_measured_m:.3f}" if result.max_measured_m is not None else "-"
     if column == 7:
         return f"{result.std_measured_m:.3f}" if result.std_measured_m is not None else "-"
     if column == 8:
