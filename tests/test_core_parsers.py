@@ -91,8 +91,10 @@ def test_parse_session_info_success() -> None:
         " RSSI[dBm]=-78.0]}"
     )
 
-    measurement = parse_session_info(line)
+    measurements = parse_session_info(line)
 
+    assert len(measurements) == 1
+    measurement = measurements[0]
     assert measurement.status == "SUCCESS"
     assert measurement.distance_cm == 210
     assert measurement.rssi_dbm == pytest.approx(-78.0)
@@ -105,10 +107,46 @@ def test_parse_session_info_failure_has_no_distance() -> None:
         ' n_measurements=1 [mac_address=0x0001, status="RX_TIMEOUT"]}'
     )
 
-    measurement = parse_session_info(line)
+    measurements = parse_session_info(line)
 
-    assert measurement.status == "RX_TIMEOUT"
-    assert measurement.distance_cm is None
+    assert len(measurements) == 1
+    assert measurements[0].status == "RX_TIMEOUT"
+    assert measurements[0].distance_cm is None
+
+
+def test_parse_session_info_one_to_many_returns_one_measurement_per_responder() -> None:
+    # Capturado contra hardware real 2026-09-10 (UWB-Node-4 iniciador con
+    # -MULTI, UWB-Node-6/UWB-Node-8 respondedores con -MULTI cada uno).
+    line = (
+        "SESSION_INFO_NTF: {session_handle=1, sequence_number=40, block_index=40,"
+        ' n_measurements=2 [mac_address=0x0006, status="SUCCESS", distance[cm]=2];'
+        ' [mac_address=0x0008, status="SUCCESS", distance[cm]=19]}'
+    )
+
+    measurements = parse_session_info(line)
+
+    assert len(measurements) == 2
+    assert [m.mac_address for m in measurements] == ["0x0006", "0x0008"]
+    assert [m.distance_cm for m in measurements] == [2, 19]
+    assert all(m.sequence_number == 40 and m.block_index == 40 for m in measurements)
+
+
+def test_parse_session_info_one_to_many_mixed_success_and_timeout() -> None:
+    # Tambien capturado contra hardware real: un respondedor puede fallar
+    # su ronda mientras el otro mide bien, dentro de la misma notificacion.
+    line = (
+        "SESSION_INFO_NTF: {session_handle=1, sequence_number=50, block_index=50,"
+        ' n_measurements=2 [mac_address=0x0006, status="RX_TIMEOUT"];'
+        ' [mac_address=0x0008, status="SUCCESS", distance[cm]=19]}'
+    )
+
+    measurements = parse_session_info(line)
+
+    assert len(measurements) == 2
+    assert measurements[0].status == "RX_TIMEOUT"
+    assert measurements[0].distance_cm is None
+    assert measurements[1].status == "SUCCESS"
+    assert measurements[1].distance_cm == 19
 
 
 def test_parse_session_info_rejects_non_notification() -> None:

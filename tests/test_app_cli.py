@@ -88,6 +88,36 @@ def test_run_generates_report(tmp_path: Path) -> None:
     assert payload["resumen"]["pass"] == 2  # distancia calculada 5.0m == medida 5.0m
 
 
+def test_run_one_to_many_flag_uses_one_to_many_campaign(tmp_path: Path) -> None:
+    """`--one-to-many` debe llamar `run_campaign_one_to_many`, no
+    `run_campaign` -- puramente de enrutamiento, no reimplementa nada."""
+    toml_path = tmp_path / "sala_99.toml"
+    toml_path.write_text(ENVIRONMENT_TOML, encoding="utf-8")
+    report_dir = tmp_path / "reports"
+
+    with (
+        patch(
+            "imop_measure.app.cli.run_campaign_one_to_many", side_effect=_fake_run_campaign
+        ) as mock_one_to_many,
+        patch("imop_measure.app.cli.run_campaign") as mock_default,
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--environment",
+                str(toml_path),
+                "--report-dir",
+                str(report_dir),
+                "--one-to-many",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_one_to_many.assert_called_once()
+    mock_default.assert_not_called()
+
+
 def test_run_missing_environment_file_fails(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", "--environment", str(tmp_path / "no_existe.toml")])
 

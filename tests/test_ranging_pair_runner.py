@@ -25,6 +25,7 @@ from imop_measure.ranging.pair_runner import (
     close_initiator,
     open_initiator,
     run_directed_measurement,
+    run_one_to_many,
     run_pair,
 )
 from imop_measure.ranging.session import SessionParams
@@ -95,6 +96,25 @@ def _ntf_fragments(n: int, *, distance_cm: int | None, status: str = "SUCCESS") 
         f"block_index={n}, n_measurements=1\r\n"
     )
     line2 = f'\r [mac_address=0x000A, status="{status}"{distance_part}]}}\r\n'
+    return [line1.encode("ascii"), line2.encode("ascii")]
+
+
+def _ntf_fragments_multi(n: int, entries: list[tuple[int, int | None, str]]) -> list[bytes]:
+    """Como `_ntf_fragments`, pero para modo uno-a-muchos (`-MULTI`, ver
+    `ranging/session.py`): varias mediciones en la misma notificacion, una
+    por `(addr, distance_cm, status)` en `entries` -- reproduce el formato
+    real capturado contra hardware (n_measurements>1, un bloque
+    `[mac_address=...]` por respondedor, separados por `;`).
+    """
+    blocks = []
+    for addr, distance_cm, status in entries:
+        distance_part = f", distance[cm]={distance_cm}" if distance_cm is not None else ""
+        blocks.append(f'[mac_address=0x{addr:04X}, status="{status}"{distance_part}]')
+    line1 = (
+        f"SESSION_INFO_NTF: {{session_handle=1, sequence_number={n}, "
+        f"block_index={n}, n_measurements={len(entries)}\r\n"
+    )
+    line2 = f"\r {'; '.join(blocks)}}}\r\n"
     return [line1.encode("ascii"), line2.encode("ascii")]
 
 
@@ -314,9 +334,18 @@ def test_run_pair_keeps_successes_when_final_stop_fails() -> None:
     assert result.distance_cm_samples == [200]
 
 
-def test_run_pair_connect_failure_marks_error_without_raising() -> None:
+def test_run_pair_connect_failure_marks_error_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # _OPEN_RETRY_ATTEMPTS=10 hace este test lento si no se cuida: el
+    # backoff real (3s x 9 esperas) se achica abajo, pero lo que de verdad
+    # lo inflaba a ~213s era que el iniciador (B) no tenia script -- sin
+    # respuesta a STOP/STAT, ensure_mode_none() esperaba el
+    # command_timeout_s real en cada uno de los 10 intentos.
+    monkeypatch.setattr("imop_measure.ranging.pair_runner._OPEN_RETRY_BACKOFF_S", 0.0)
+    _, script_b = _base_scripts()
     fake_a = FakeBleakClient(ANCHOR_A.mac, fail_connect=True)  # ANCHOR_A = responder
-    fake_b = FakeBleakClient(ANCHOR_B.mac)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
 
     result = run_pair(
         initiator=ANCHOR_B,
@@ -336,7 +365,10 @@ def test_run_pair_connect_failure_marks_error_without_raising() -> None:
     assert fake_b.is_connected is False
 
 
-def test_run_pair_initiator_connect_failure_marks_error_without_raising() -> None:
+def test_run_pair_initiator_connect_failure_marks_error_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("imop_measure.ranging.pair_runner._OPEN_RETRY_BACKOFF_S", 0.0)
     fake_a = FakeBleakClient(ANCHOR_A.mac)  # ANCHOR_A = responder
     fake_b = FakeBleakClient(ANCHOR_B.mac, fail_connect=True)  # ANCHOR_B = iniciador
 
@@ -494,6 +526,101 @@ def test_initiator_connection_is_reused_across_multiple_responders() -> None:
     assert fake_c.connect_attempts == 1
     # close_initiator desconecta al iniciador recien al final del grupo.
     assert fake_b.is_connected is False
+
+
+RESPF_MULTI_B = (
+    "RESPF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
+    "-VUPPER=01:02:03:04:05:06:07:08 -MULTI -ADDR=11 -PADDR=10"
+)
+RESPF_MULTI_C = (
+    "RESPF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
+    "-VUPPER=01:02:03:04:05:06:07:08 -MULTI -ADDR=12 -PADDR=10"
+)
+INITF_MULTI_A = (
+    "INITF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR -ID=42 "
+    "-VUPPER=01:02:03:04:05:06:07:08 -MULTI -ADDR=10 -PADDR=[11,12]"
+)
+
+
+def test_run_one_to_many_demultiplexes_by_responder() -> None:
+    """ANCHOR_A mide contra ANCHOR_B y ANCHOR_C a la vez, en una sola sesion
+    -MULTI -- las muestras de la misma notificacion (n_measurements=2) se
+    reparten al `MeasuredPair` de cada respondedor segun su `mac_address`.
+    """
+    script_a, script_b = _base_scripts()
+    script_c = {"STOP": [b"ok\r\n"], "STAT": [STAT_NONE]}
+    script_b[RESPF_MULTI_B] = [b"ok\r\n"]
+    script_c[RESPF_MULTI_C] = [b"ok\r\n"]
+    script_a[INITF_MULTI_A] = [
+        b"ok\r\n",
+        *_ntf_fragments_multi(0, [(11, 100, "SUCCESS"), (12, 150, "SUCCESS")]),
+        *_ntf_fragments_multi(1, [(11, 101, "SUCCESS"), (12, 151, "SUCCESS")]),
+    ]
+
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+    fake_c = FakeBleakClient(ANCHOR_C.mac, script=script_c)
+    factory = _make_factory_multi(
+        {ANCHOR_A.mac: fake_a, ANCHOR_B.mac: fake_b, ANCHOR_C.mac: fake_c}
+    )
+
+    results = run_one_to_many(
+        initiator=ANCHOR_A,
+        responders=[ANCHOR_B, ANCHOR_C],
+        session=SessionParams(),
+        n_samples=2,
+        ble_timeouts={},
+        _transport_factory=factory,
+    )
+
+    by_responder = {r.responder.key: r for r in results}
+    assert by_responder["uwb_node_b"].error is None
+    assert by_responder["uwb_node_b"].distance_cm_samples == [100, 101]
+    assert by_responder["uwb_node_c"].error is None
+    assert by_responder["uwb_node_c"].distance_cm_samples == [150, 151]
+    # Cada respondedor se conecta 2 veces: configurar y, al final, limpiar.
+    assert fake_b.connect_attempts == 2
+    assert fake_c.connect_attempts == 2
+    # El iniciador se conecta una sola vez.
+    assert fake_a.connect_attempts == 1
+
+
+def test_run_one_to_many_one_responder_connect_failure_does_not_abort_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Si ANCHOR_C no logra conectarse, ANCHOR_B igual se mide con exito."""
+    monkeypatch.setattr("imop_measure.ranging.pair_runner._OPEN_RETRY_BACKOFF_S", 0.0)
+    script_a, script_b = _base_scripts()
+    script_b[RESPF_MULTI_B] = [b"ok\r\n"]
+    # INITF ahora solo tiene a B en la lista de respondedores (C nunca se
+    # configuro con exito).
+    initf_only_b = (
+        "INITF -CHAN=9 -PRFSET=BPRF4 -PCODE=10 -SLOT=2400 -BLOCK=200 -ROUND=25 -RRU=DSTWR "
+        "-ID=42 -VUPPER=01:02:03:04:05:06:07:08 -MULTI -ADDR=10 -PADDR=[11]"
+    )
+    script_a[initf_only_b] = [b"ok\r\n", *_ntf_fragments_multi(0, [(11, 100, "SUCCESS")])]
+
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+    fake_c = FakeBleakClient(ANCHOR_C.mac, fail_connect=True)
+    factory = _make_factory_multi(
+        {ANCHOR_A.mac: fake_a, ANCHOR_B.mac: fake_b, ANCHOR_C.mac: fake_c}
+    )
+
+    results = run_one_to_many(
+        initiator=ANCHOR_A,
+        responders=[ANCHOR_B, ANCHOR_C],
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=factory,
+    )
+
+    by_responder = {r.responder.key: r for r in results}
+    assert by_responder["uwb_node_b"].error is None
+    assert by_responder["uwb_node_b"].distance_cm_samples == [100]
+    assert by_responder["uwb_node_c"].error is not None
+    assert by_responder["uwb_node_c"].n_success == 0
 
 
 @pytest.mark.hardware

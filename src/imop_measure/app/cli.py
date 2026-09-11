@@ -14,7 +14,7 @@ from rich.table import Table
 
 from imop_measure.config.loader import load_ambiente
 from imop_measure.errors import MeasureError
-from imop_measure.ranging.campaign import run_campaign
+from imop_measure.ranging.campaign import run_campaign, run_campaign_one_to_many
 from imop_measure.ranging.pair_runner import MeasuredPair
 from imop_measure.ranging.session import SessionParams
 from imop_measure.report.build import (
@@ -77,15 +77,29 @@ def run(
             help="Muestra el traceback completo ante un error, en vez de un mensaje corto.",
         ),
     ] = False,
+    one_to_many: Annotated[
+        bool,
+        typer.Option(
+            "--one-to-many",
+            help=(
+                "[Experimental] Mide cada nodo iniciador contra todos los demas a la vez "
+                "en una sola sesion FiRa uno-a-muchos (-MULTI), en vez de una conexion BLE "
+                "por direccion. Mucho mas rapido, pero con muchas menos horas de prueba "
+                "contra hardware real que el modo por defecto — ver "
+                "docs/investigacion-desviaciones-uwb-2026-09-10.md."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Mide la distancia real entre todos los nodos del ambiente (ambas
     direcciones) y genera un reporte comparándola contra la calculada."""
     with _error_boundary(verbose=verbose):
         ambiente = load_ambiente(environment)
         n_directed_pairs = len(ambiente.anchors) * (len(ambiente.anchors) - 1)
+        modo = " (modo uno-a-muchos, experimental)" if one_to_many else ""
         console.print(
             f"Ambiente sala {ambiente.id}: {len(ambiente.anchors)} anclas activas, "
-            f"{n_directed_pairs} direcciones a medir."
+            f"{n_directed_pairs} direcciones a medir{modo}."
         )
 
         def on_pair_done(result: MeasuredPair) -> None:
@@ -95,8 +109,9 @@ def run(
                 f"{result.n_success}/{result.n_requested} muestras - {estado}"
             )
 
+        campaign_fn = run_campaign_one_to_many if one_to_many else run_campaign
         with console.status(f"Midiendo {n_directed_pairs} direcciones..."):
-            measured_pairs = run_campaign(
+            measured_pairs = campaign_fn(
                 ambiente, session=SessionParams(), n_samples=samples, on_pair_done=on_pair_done
             )
 

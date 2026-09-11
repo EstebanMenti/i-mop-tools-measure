@@ -32,14 +32,23 @@ _MODE_RE = re.compile(r"^MODE:\s*(\S+)")
 _CALKEY_RE = re.compile(r"^\s*([A-Za-z0-9_.]+):\s*0x([0-9A-Fa-f]+)\s*\(len:\s*(\d+)\)\s*$")
 
 _SESSION_PREFIX = "SESSION_INFO_NTF"
-_SESSION_FIELDS = {
+_SESSION_HEADER_FIELDS = {
     "sequence_number": re.compile(r"sequence_number=(\d+)"),
     "block_index": re.compile(r"block_index=(\d+)"),
-    "mac_address": re.compile(r"mac_address=(0x[0-9A-Fa-f]+)"),
-    "status": re.compile(r'status="([^"]*)"'),
-    "distance_cm": re.compile(r"distance\[cm\]=(-?\d+)"),
-    "rssi_dbm": re.compile(r"RSSI\[dBm\]=(-?\d+(?:\.\d+)?)"),
 }
+# Un bloque `[mac_address=..., status="...", distance[cm]=..., RSSI[dBm]=...]`
+# por medicion -- normalmente uno (n_measurements=1), pero en modo uno-a-muchos
+# (`-MULTI`, ver ranging/session.py) llegan varios en la misma notificacion,
+# uno por respondedor (verificado contra hardware real 2026-09-10: UWB-Node-4
+# iniciador -MULTI contra UWB-Node-6/UWB-Node-8, n_measurements=2, dos
+# bloques). Cada campo se busca DENTRO de su propio bloque (no en todo el
+# texto de la notificacion), para no mezclar campos de mediciones distintas.
+_MEASUREMENT_BLOCK_RE = re.compile(
+    r"\[mac_address=(?P<mac_address>0x[0-9A-Fa-f]+),\s*status=\"(?P<status>[^\"]*)\""
+    r"(?:,\s*distance\[cm\]=(?P<distance_cm>-?\d+))?"
+    r"(?:,\s*RSSI\[dBm\]=(?P<rssi_dbm>-?\d+(?:\.\d+)?))?"
+    r"\s*\]"
+)
 
 # Prefijo de la notificacion de diagnostico por ronda (requiere `DIAG 1`
 # activo, ver `DwmCliClient.diag`). Un bloque trae varios reportes, uno por
@@ -157,34 +166,50 @@ def parse_listcal(lines: list[str]) -> dict[str, CalKey]:
     return keys
 
 
-def parse_session_info(line: str) -> Measurement:
+def parse_session_info(line: str) -> list[Measurement]:
     """Parsea una notificacion `SESSION_INFO_NTF`.
 
-    `distance_cm` y `rssi_dbm` son opcionales; el resto de los campos es
-    obligatorio y su ausencia es un error.
+    Devuelve una lista porque en modo uno-a-muchos (`-MULTI`, ver
+    `ranging/session.py`) una sola notificacion trae una medicion por cada
+    respondedor (`n_measurements` > 1) — en modo uno-a-uno (el caso de
+    siempre) la lista tiene un solo elemento. Todas las mediciones de una
+    misma notificacion comparten `sequence_number`/`block_index`/`raw`.
+
+    `distance_cm` y `rssi_dbm` son opcionales por medicion; `mac_address`/
+    `status` son obligatorios y su ausencia es un error.
     """
     if not line.strip().startswith(_SESSION_PREFIX):
         raise ValueError(f"No es una notificacion {_SESSION_PREFIX}: {line!r}")
 
-    values: dict[str, str | None] = {
+    header: dict[str, str | None] = {
         name: (match.group(1) if (match := pattern.search(line)) else None)
-        for name, pattern in _SESSION_FIELDS.items()
+        for name, pattern in _SESSION_HEADER_FIELDS.items()
     }
-    for required in ("sequence_number", "block_index", "mac_address", "status"):
-        if values[required] is None:
+    for required in ("sequence_number", "block_index"):
+        if header[required] is None:
             raise ValueError(f"{_SESSION_PREFIX} sin campo {required}: {line!r}")
+    sequence_number = int(header["sequence_number"] or 0)
+    block_index = int(header["block_index"] or 0)
 
-    distance = values["distance_cm"]
-    rssi = values["rssi_dbm"]
-    return Measurement(
-        sequence_number=int(values["sequence_number"] or 0),
-        block_index=int(values["block_index"] or 0),
-        mac_address=values["mac_address"] or "",
-        status=values["status"] or "",
-        distance_cm=int(distance) if distance is not None else None,
-        rssi_dbm=float(rssi) if rssi is not None else None,
-        raw=line,
-    )
+    measurements = [
+        Measurement(
+            sequence_number=sequence_number,
+            block_index=block_index,
+            mac_address=match.group("mac_address"),
+            status=match.group("status"),
+            distance_cm=(
+                int(match.group("distance_cm")) if match.group("distance_cm") is not None else None
+            ),
+            rssi_dbm=(
+                float(match.group("rssi_dbm")) if match.group("rssi_dbm") is not None else None
+            ),
+            raw=line,
+        )
+        for match in _MEASUREMENT_BLOCK_RE.finditer(line)
+    ]
+    if not measurements:
+        raise ValueError(f"{_SESSION_PREFIX} sin ninguna medicion reconocible: {line!r}")
+    return measurements
 
 
 def parse_range_diagnostics(text: str) -> RangeDiagnostics:
