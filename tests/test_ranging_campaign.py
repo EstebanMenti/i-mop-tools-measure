@@ -158,6 +158,79 @@ def test_run_campaign_calls_on_pair_done_callback() -> None:
     assert seen[0].mean_cm == 100.0
 
 
+def _fake_measurements_multi(
+    *, initiator: Anchor, responders: list[Anchor], **_kwargs: object
+) -> list[MeasuredPair]:
+    return [_fake_measurement(initiator=initiator, responder=r) for r in responders]
+
+
+def test_run_campaign_one_to_many_calls_once_per_initiator_with_the_rest_as_responders() -> None:
+    """A diferencia de `run_campaign` (una llamada por direccion), acá se
+    llama `run_one_to_many` una vez por nodo iniciador, con el resto del
+    ambiente como lista de respondedores -- `N` llamadas en vez de
+    `N*(N-1)`.
+    """
+    anchors = [_anchor("a"), _anchor("b"), _anchor("c")]
+    calls: list[tuple[str, list[str]]] = []
+
+    def capture(
+        *, initiator: Anchor, responders: list[Anchor], **_kwargs: object
+    ) -> list[MeasuredPair]:
+        calls.append((initiator.key, [r.key for r in responders]))
+        return _fake_measurements_multi(initiator=initiator, responders=responders)
+
+    with patch("imop_measure.ranging.campaign.run_one_to_many", side_effect=capture):
+        results = campaign.run_campaign_one_to_many(
+            _ambiente(anchors), session=SessionParams(), n_samples=1
+        )
+
+    assert calls == [
+        ("a", ["b", "c"]),
+        ("b", ["a", "c"]),
+        ("c", ["a", "b"]),
+    ]
+    # Misma cobertura total que run_campaign: N*(N-1) resultados.
+    assert len(results) == 6
+
+
+def test_run_campaign_one_to_many_unexpected_exception_does_not_abort_campaign() -> None:
+    anchors = [_anchor("a"), _anchor("b"), _anchor("c")]
+
+    def side_effect(
+        *, initiator: Anchor, responders: list[Anchor], **_kwargs: object
+    ) -> list[MeasuredPair]:
+        if initiator.key == "b":
+            raise RuntimeError("bug simulado")
+        return _fake_measurements_multi(initiator=initiator, responders=responders)
+
+    with patch("imop_measure.ranging.campaign.run_one_to_many", side_effect=side_effect):
+        results = campaign.run_campaign_one_to_many(
+            _ambiente(anchors), session=SessionParams(), n_samples=1
+        )
+
+    assert len(results) == 6
+    b_results = [r for r in results if r.initiator.key == "b"]
+    assert len(b_results) == 2
+    assert all("bug simulado" in (r.error or "") for r in b_results)
+    other_results = [r for r in results if r.initiator.key != "b"]
+    assert all(r.error is None for r in other_results)
+
+
+def test_run_campaign_one_to_many_calls_on_pair_done_per_result() -> None:
+    anchors = [_anchor("a"), _anchor("b")]
+    seen: list[MeasuredPair] = []
+
+    with patch(
+        "imop_measure.ranging.campaign.run_one_to_many", side_effect=_fake_measurements_multi
+    ):
+        campaign.run_campaign_one_to_many(
+            _ambiente(anchors), session=SessionParams(), n_samples=1, on_pair_done=seen.append
+        )
+
+    assert len(seen) == 2  # a->b (1 llamada, 1 respondedor) + b->a
+    assert seen[0].mean_cm == 100.0
+
+
 @pytest.mark.hardware
 def test_run_campaign_against_real_nodes() -> None:
     """Corre run_campaign de punta a punta contra environments/sala_20.toml.

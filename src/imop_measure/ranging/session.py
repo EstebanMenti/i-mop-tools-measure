@@ -12,7 +12,13 @@ ranging/addressing.py).
 
 from dataclasses import dataclass
 
-__all__ = ["SessionParams", "initiator_kwargs", "responder_kwargs"]
+__all__ = [
+    "SessionParams",
+    "initiator_kwargs",
+    "initiator_kwargs_multi",
+    "responder_kwargs",
+    "responder_kwargs_multi",
+]
 
 
 @dataclass(frozen=True)
@@ -65,3 +71,35 @@ def initiator_kwargs(params: SessionParams, *, addr: int, paddr: int) -> dict[st
 def responder_kwargs(params: SessionParams, *, addr: int, paddr: int) -> dict[str, object]:
     """Kwargs completos para `RESPF`, con las direcciones reales del par."""
     return {**params.responder_kwargs(), "addr": addr, "paddr": paddr}
+
+
+def initiator_kwargs_multi(
+    params: SessionParams, *, addr: int, paddr: list[int]
+) -> dict[str, object]:
+    """Kwargs completos para `INITF` en modo uno-a-muchos (`-MULTI`), con la
+    lista de direcciones de todos los respondedores de la ronda.
+
+    [Verificado 2026-09-10 contra hardware real, Developer Manual
+    QM33SDK-1.1.1 seccion 7 Listing 7.5]: `-PADDR=[1,2,.,.,n]` acepta N
+    respondedores; probado con 2 (UWB-Node-6/UWB-Node-8), 152/152 muestras
+    `SUCCESS`. No hay formula confirmada para el maximo de respondedores
+    que entran en `round_slots` (el manual solo advierte que "ROUND tiene
+    que ajustarse a la cantidad de controlees", sin dar la cuenta exacta)
+    — `TODO(verificar-con-hardware)` para N mayor a 2.
+    """
+    if not paddr:
+        raise ValueError("initiator_kwargs_multi: paddr no puede estar vacio")
+    return {**params.initiator_kwargs(), "addr": addr, "paddr": paddr, "multi": True}
+
+
+def responder_kwargs_multi(params: SessionParams, *, addr: int, paddr: int) -> dict[str, object]:
+    """Kwargs completos para `RESPF` en modo uno-a-muchos (`-MULTI`).
+
+    A diferencia del iniciador, el respondedor sigue usando un `-PADDR=`
+    unico (la direccion del iniciador, no una lista) — el flag `-MULTI` es
+    lo unico que cambia respecto a `responder_kwargs` (verificado contra
+    hardware real 2026-09-10, Developer Manual QM33SDK-1.1.1 Listing 7.6:
+    `RESPF -MULTI -PADDR=0 -ADDR=1`). Sin este flag en el respondedor, la
+    ronda no arranca: las muestras dan `RX_TIMEOUT` al 100% (reproducido).
+    """
+    return {**params.responder_kwargs(), "addr": addr, "paddr": paddr, "multi": True}

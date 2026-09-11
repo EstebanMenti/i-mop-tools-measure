@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from itertools import permutations
 
 from imop_measure.config.models import Ambiente, Anchor
-from imop_measure.ranging.pair_runner import MeasuredPair, run_pair
+from imop_measure.ranging.pair_runner import MeasuredPair, run_one_to_many, run_pair
 from imop_measure.ranging.session import SessionParams
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,77 @@ def run_campaign(
         if on_pair_done is not None:
             on_pair_done(result)
     return results
+
+
+def run_campaign_one_to_many(
+    ambiente: Ambiente,
+    *,
+    session: SessionParams,
+    n_samples: int,
+    on_pair_done: Callable[[MeasuredPair], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> list[MeasuredPair]:
+    """Igual cobertura que `run_campaign` (`N*(N-1)` direcciones: cada nodo
+    mide contra todos los demas como iniciador), pero midiendo con
+    `pair_runner.run_one_to_many` — una sesion FiRa uno-a-muchos (`-MULTI`)
+    por nodo iniciador, contra todos los demas a la vez, en vez de una
+    conexion BLE del iniciador por respondedor.
+
+    [Modo experimental, agregado 2026-09-10 — ver
+    docs/investigacion-desviaciones-uwb-2026-09-10.md]: valida factible
+    contra hardware real (2 respondedores, 152/152 muestras SUCCESS), pero
+    con muchas menos horas de prueba que `run_campaign` (el modo por
+    defecto). No reemplaza a `run_campaign` — es una alternativa aparte,
+    para no arriesgar el flujo ya validado.
+
+    `N` sesiones en vez de `N*(N-1)` conexiones del iniciador — mucho menos
+    tiempo de conexion BLE total, a costa de un modo sin la misma cantidad
+    de horas de validacion.
+    """
+    results: list[MeasuredPair] = []
+    for initiator, responders in _grouped_for_one_to_many(ambiente.anchors):
+        try:
+            group_results = run_one_to_many(
+                initiator=initiator,
+                responders=responders,
+                session=session,
+                n_samples=n_samples,
+                ble_timeouts=ambiente.ble_timeouts,
+                on_status=on_status,
+            )
+        except Exception as exc:
+            # Exception generica, no MeasureError: un bug aca tampoco debe
+            # abortar el resto de la campaña (mismo criterio que run_campaign).
+            logger.exception(
+                "run_one_to_many fallo de forma inesperada, iniciador=%s", initiator.nombre
+            )
+            group_results = [
+                MeasuredPair(
+                    initiator=initiator,
+                    responder=responder,
+                    distance_cm_samples=[],
+                    mean_cm=None,
+                    std_cm=None,
+                    n_success=0,
+                    n_requested=n_samples,
+                    error=str(exc),
+                )
+                for responder in responders
+            ]
+        for result in group_results:
+            results.append(result)
+            if on_pair_done is not None:
+                on_pair_done(result)
+    return results
+
+
+def _grouped_for_one_to_many(anchors: list[Anchor]) -> Iterator[tuple[Anchor, list[Anchor]]]:
+    """Un grupo por nodo iniciador, con el resto de las anclas como
+    respondedores (ver `run_campaign_one_to_many`)."""
+    for initiator in anchors:
+        responders = [a for a in anchors if a is not initiator]
+        if responders:
+            yield initiator, responders
 
 
 def _directed_pairs(anchors: list[Anchor]) -> Iterator[tuple[Anchor, Anchor]]:

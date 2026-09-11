@@ -166,8 +166,23 @@ def _format_app_options(params: Mapping[str, object]) -> list[str]:
                 raise ValueError(f"Opcion {name!r}: se espera bool; llego {value!r}")
             if value:
                 parts.append(f"-{name.upper()}")
-        elif name in ("addr", "paddr"):
-            parts.append(f"-{name.upper()}={_as_int(name, value, 0, 65535)}")
+        elif name == "addr":
+            parts.append(f"-ADDR={_as_int(name, value, 0, 65535)}")
+        elif name == "paddr":
+            # En modo uno-a-muchos (-MULTI) el iniciador acepta una lista de
+            # respondedores: -PADDR=[1,2,.,.,n] (verificado contra hardware
+            # real 2026-09-10, ver Developer Manual QM33SDK-1.1.1 seccion 7,
+            # Listing 7.5). El respondedor sigue usando un unico -PADDR=
+            # (la direccion del iniciador) incluso con -MULTI activo.
+            if isinstance(value, list):
+                if not value:
+                    raise ValueError(
+                        "Opcion 'paddr': la lista de respondedores no puede estar vacia"
+                    )
+                addrs = [_as_int("paddr[]", item, 0, 65535) for item in value]
+                parts.append(f"-PADDR=[{','.join(str(a) for a in addrs)}]")
+            else:
+                parts.append(f"-PADDR={_as_int(name, value, 0, 65535)}")
     return parts
 
 
@@ -543,6 +558,15 @@ class DwmCliClient:
         medicion (no trae numero de ronda propio para emparejarla de otra
         forma, ver `parse_range_diagnostics`); si DIAG esta apagado nunca
         llega y `diagnostics` queda en `None`.
+
+        En modo uno-a-muchos (`-MULTI`, ver `ranging/session.py`) una sola
+        `SESSION_INFO_NTF` trae una medicion por respondedor
+        (`parse_session_info` devuelve varias) — cada una se agrega por
+        separado a la lista devuelta y dispara su propio `on_measurement`.
+        [Por verificar en hardware]: no se confirmo si `RANGE_DIAGNOSTICS_NTF`
+        trae un bloque por respondedor o uno combinado en este modo: el
+        diagnostico pendiente, si llega, se adjunta solo a la primera
+        medicion de la notificacion.
         """
         if duration_s is None and max_count is None:
             raise ValueError("Indicar duration_s y/o max_count")
@@ -588,14 +612,15 @@ class DwmCliClient:
                     logger.warning("Diagnostico no parseable en %s: %r", self.name, joined)
                 continue
             try:
-                measurement = parse_session_info(joined)
+                parsed = parse_session_info(joined)
             except ValueError:
                 logger.warning("Notificacion no parseable en %s: %r", self.name, joined)
                 continue
-            if pending_diagnostics is not None:
-                measurement = replace(measurement, diagnostics=pending_diagnostics)
-                pending_diagnostics = None
-            measurements.append(measurement)
-            if on_measurement is not None:
-                on_measurement(measurement)
+            for index, measurement in enumerate(parsed):
+                if index == 0 and pending_diagnostics is not None:
+                    measurement = replace(measurement, diagnostics=pending_diagnostics)
+                    pending_diagnostics = None
+                measurements.append(measurement)
+                if on_measurement is not None:
+                    on_measurement(measurement)
         return measurements

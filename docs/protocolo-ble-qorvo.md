@@ -171,6 +171,65 @@ sin tocar la app `RESPF` en curso.
 > obsoleta del 08/09 (16 corridas vs 36), pero es la única contra el
 > firmware actual; ampliarla si se necesita más confianza.
 
+### 3.2 Modo uno-a-muchos (`-MULTI`)
+
+> **Fuente:** Developer Manual `DWM3001CDK_Developer_Manual_QM33SDK-1.1.1.pdf`
+> (SDK `DW3_QM33_SDK_1.1.1`), sección 7 — es el "SDK Manual" al que remite
+> la ayuda del firmware (`HELP INITF`/`HELP RESPF`) para el detalle que no
+> cubre `HELP`. Implementado en `ranging.pair_runner.run_one_to_many` /
+> `ranging.session.initiator_kwargs_multi` / `responder_kwargs_multi` —
+> modo **experimental**, opt-in (`--one-to-many` en la CLI), no reemplaza
+> el flujo por defecto (`ranging.campaign.run_campaign`).
+
+Un iniciador puede rangear contra varios respondedores dentro de la misma
+sesión FiRa (`MULTI_NODE_MODE: ONE_TO_MANY` en vez de `UNICAST`), en vez de
+una sesión por par:
+
+```
+INITF -MULTI -ADDR=0 -PADDR=[1,2,3]
+
+RESPF -MULTI -PADDR=0 -ADDR=1
+RESPF -MULTI -PADDR=0 -ADDR=2
+RESPF -MULTI -PADDR=0 -ADDR=3
+```
+
+- **El flag `-MULTI` hace falta en ambos roles.** El iniciador acepta
+  `-PADDR=[lista]` (varios respondedores); el respondedor sigue usando un
+  `-PADDR=` único (la dirección del iniciador, no una lista) — solo
+  cambia que también lleva `-MULTI`.
+  **[Verificado 2026-09-10 contra hardware real]:** con `-MULTI` solo en
+  el iniciador y `RESPF` "normal" en los respondedores, el 100% de las
+  rondas dio `RX_TIMEOUT` (0% éxito, ~76 rondas). Agregando `-MULTI`
+  también en cada `RESPF` (igual que en el manual), 152/152 muestras
+  `SUCCESS` — confirmado con 2 respondedores reales
+  (`uwb_node_6`/`uwb_node_8`).
+- **`SESSION_INFO_NTF` trae `n_measurements` > 1**: una notificación por
+  ronda, con un bloque `[mac_address=..., status=..., distance[cm]=...]`
+  por respondedor (ver `core/parsers.py::parse_session_info`, devuelve
+  `list[Measurement]`). Ejemplo real:
+  ```
+  SESSION_INFO_NTF: {session_handle=1, sequence_number=40, block_index=40, n_measurements=2
+   [mac_address=0x0006, status="SUCCESS", distance[cm]=2];
+   [mac_address=0x0008, status="SUCCESS", distance[cm]=19]}
+  ```
+- **Cada respondedor puede configurarse y desconectarse de a uno**, sin
+  necesidad de mantener conexiones BLE simultáneas: el módulo Qorvo sigue
+  corriendo `RESPF` de forma autónoma sin conexión BLE activa.
+  **[Verificado 2026-09-10 contra hardware real]:** se configuró un
+  respondedor, se cerró su conexión BLE por completo (sin `STOP`, sin
+  apagar) y se esperaron 15s — al medir después desde otro nodo, 20/20
+  muestras `SUCCESS` con el `mac_address` correcto. Por esto
+  `run_one_to_many` conecta y desconecta cada respondedor de a uno para
+  configurarlo, y solo mantiene la conexión del iniciador activa durante
+  el muestreo.
+- **[Por verificar en hardware]:** no hay fórmula confirmada del máximo de
+  respondedores que entran en una ronda (`round_slots`, default 25) — el
+  manual solo advierte "ROUND tiene que ajustarse a la cantidad de
+  controlees" sin dar la cuenta exacta. Probado únicamente con 2.
+- **[Por verificar en hardware]:** no se confirmó si `RANGE_DIAGNOSTICS_NTF`
+  (con `DIAG 1`) trae un bloque por respondedor o uno combinado en este
+  modo.
+
 ## 4. Lectura de la distancia medida
 
 > **[fw puente ≥ 0.3.0]:** las notificaciones `SESSION_INFO_NTF` ya **no**

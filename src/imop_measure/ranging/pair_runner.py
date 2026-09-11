@@ -16,7 +16,13 @@ from imop_measure.config.models import Anchor
 from imop_measure.core.client import DwmCliClient
 from imop_measure.errors import MeasureError
 from imop_measure.ranging.addressing import uwb_addr_to_int
-from imop_measure.ranging.session import SessionParams, initiator_kwargs, responder_kwargs
+from imop_measure.ranging.session import (
+    SessionParams,
+    initiator_kwargs,
+    initiator_kwargs_multi,
+    responder_kwargs,
+    responder_kwargs_multi,
+)
 from imop_measure.transport.ble_link import BleTransport
 
 logger = logging.getLogger(__name__)
@@ -67,10 +73,13 @@ _RESPONDER_KEEPALIVE_INTERVAL_S = 5.0
 # `run_directed_measurement`) cierra siempre el transporte fallido antes de
 # reintentar (nunca reusa uno a medio abrir) y reintenta con un backoff
 # corto para darle tiempo al stack de asentarse.
-# [2026-09-10] Subido de 2 a 4 -- pedido explicito: mas intentos de
-# conexion antes de marcar una direccion como fallida, aceptando que tarde
-# mas, dada la inestabilidad de BLE observada contra hardware real.
-_OPEN_RETRY_ATTEMPTS = 4
+# [2026-09-10] Subido de 2 a 4, y despues a 10 -- pedido explicito: mas
+# intentos de conexion antes de marcar una direccion como fallida,
+# aceptando que tarde mas, dada la inestabilidad de BLE observada contra
+# hardware real (agravado en modo uno-a-muchos, ver run_one_to_many: una
+# falla de conexion durante la configuracion secuencial de respondedores
+# descarta solo ese respondedor, no toda la ronda).
+_OPEN_RETRY_ATTEMPTS = 10
 _OPEN_RETRY_BACKOFF_S = 3.0
 
 _TransportFactory = Callable[[str], BleTransport]
@@ -401,6 +410,171 @@ def run_pair(
         close_initiator(handle)
 
 
+def run_one_to_many(
+    *,
+    initiator: Anchor,
+    responders: list[Anchor],
+    session: SessionParams,
+    n_samples: int,
+    ble_timeouts: Mapping[str, float],
+    _transport_factory: _TransportFactory | None = None,
+    on_status: _StatusCallback | None = None,
+) -> list[MeasuredPair]:
+    """Mide la distancia real entre `initiator` y TODOS sus `responders` en
+    una sola sesion FiRa uno-a-muchos (`-MULTI`), en vez de una conexion
+    BLE por respondedor.
+
+    [Verificado 2026-09-10 contra hardware real, modo experimental — ver
+    docs/investigacion-desviaciones-uwb-2026-09-10.md]:
+
+    1. Cada respondedor se conecta, se configura (`power_cycle()` +
+       `RESPF -MULTI`) y se **desconecta** de a uno por vez — el modulo
+       Qorvo sigue corriendo `RESPF` de forma autonoma sin conexion BLE
+       activa (confirmado: 20/20 muestras `SUCCESS` tras desconectar,
+       esperar 15s y medir desde otro nodo). Por eso nunca hace falta mas
+       de una conexion BLE simultanea durante esta etapa.
+    2. El iniciador se conecta una sola vez y arranca
+       `INITF -MULTI -PADDR=[addr1,addr2,...]` contra todos los
+       respondedores configurados con exito.
+    3. Se leen notificaciones del iniciador hasta que cada respondedor
+       junte `n_samples` muestras `SUCCESS` (demultiplexando por
+       `mac_address`, ver `_collect_success_samples_multi`) o se agote el
+       tiempo estimado.
+    4. Cada respondedor configurado se reconecta de a uno al final para
+       pararlo (`STOP`) y apagarlo (`power_off`) prolijamente.
+
+    Un respondedor que no logra conectarse o configurarse (tras
+    `_OPEN_RETRY_ATTEMPTS` reintentos) queda con `MeasuredPair.error` y no
+    participa de la ronda — el resto sigue sin verse afectado. Si el
+    iniciador no logra conectarse, todos los respondedores ya configurados
+    quedan en error (se reconectan igual para pararlos).
+
+    [Por verificar en hardware]: no hay formula confirmada del maximo de
+    respondedores que entran en una ronda (`session.round_slots`) — probado
+    con 2. Con mas respondedores puede hacer falta subir `round_slots`
+    (ver Developer Manual QM33SDK-1.1.1 seccion 7: "ROUND tiene que
+    ajustarse a la cantidad de controlees").
+    """
+    if not responders:
+        raise ValueError("run_one_to_many: se necesita al menos un respondedor")
+
+    make_transport = _transport_factory or _default_transport_factory(ble_timeouts)
+    command_timeout_s = ble_timeouts.get("qorvo_command_timeout", _DEFAULT_QORVO_COMMAND_TIMEOUT_S)
+    addr_init = uwb_addr_to_int(initiator.uwb_addr)
+
+    configured: list[Anchor] = []
+    results: list[MeasuredPair] = []
+    for responder in responders:
+        addr_resp = uwb_addr_to_int(responder.uwb_addr)
+        try:
+            transport_resp, client_resp = _open_and_confirm_none(
+                make_transport,
+                responder.mac,
+                command_timeout_s=command_timeout_s,
+                label=responder.nombre,
+                on_status=on_status,
+            )
+        except MeasureError as exc:
+            logger.warning("No se pudo conectar %s como respondedor: %s", responder.nombre, exc)
+            results.append(_build_result(initiator, responder, [], n_samples, str(exc)))
+            continue
+        try:
+            _emit(on_status, f"Configurando {responder.nombre} (uno-a-muchos)...")
+            transport_resp.power_cycle()
+            client_resp.ensure_mode_none()
+            client_resp.start_respf(
+                **responder_kwargs_multi(session, addr=addr_resp, paddr=addr_init)
+            )
+            configured.append(responder)
+        except MeasureError as exc:
+            logger.warning("Fallo configurando RESPF en %s: %s", responder.nombre, exc)
+            results.append(_build_result(initiator, responder, [], n_samples, str(exc)))
+        finally:
+            # No STOP ni power_off: sigue corriendo RESPF sin conexion BLE
+            # (ver docstring) hasta la limpieza final.
+            transport_resp.close()
+
+    if not configured:
+        return results
+
+    try:
+        transport_init, client_init = _open_and_confirm_none(
+            make_transport,
+            initiator.mac,
+            command_timeout_s=command_timeout_s,
+            label=initiator.nombre,
+            on_status=on_status,
+        )
+    except MeasureError as exc:
+        logger.warning("Fallo conectando iniciador %s: %s", initiator.nombre, exc)
+        for responder in configured:
+            results.append(_build_result(initiator, responder, [], n_samples, str(exc)))
+        _stop_configured_responders(make_transport, command_timeout_s, configured)
+        return results
+
+    samples_by_addr: dict[int, list[int]] = {uwb_addr_to_int(r.uwb_addr): [] for r in configured}
+    try:
+        _emit(
+            on_status,
+            f"Configurando {initiator.nombre} (uno-a-muchos, {len(configured)} respondedores)...",
+        )
+        transport_init.power_cycle()
+        client_init.ensure_mode_none()
+        paddr_list = [uwb_addr_to_int(r.uwb_addr) for r in configured]
+        client_init.start_initf(**initiator_kwargs_multi(session, addr=addr_init, paddr=paddr_list))
+
+        nombres = ", ".join(r.nombre for r in configured)
+        _emit(on_status, f"Midiendo distancia: {initiator.nombre} -> {nombres}...")
+        _collect_success_samples_multi(
+            client_init, session=session, n_samples=n_samples, samples_by_addr=samples_by_addr
+        )
+
+        _stop_quietly(client_init)
+    except MeasureError as exc:
+        logger.warning("Fallo midiendo uno-a-muchos desde %s: %s", initiator.nombre, exc)
+    finally:
+        _safe_power_off(transport_init)
+        transport_init.close()
+
+    for responder in configured:
+        samples = samples_by_addr[uwb_addr_to_int(responder.uwb_addr)]
+        error = None if samples else "sin mediciones SUCCESS recibidas"
+        results.append(_build_result(initiator, responder, samples, n_samples, error))
+
+    _stop_configured_responders(make_transport, command_timeout_s, configured)
+    return results
+
+
+def _stop_configured_responders(
+    make_transport: _TransportFactory,
+    command_timeout_s: float,
+    responders: list[Anchor],
+) -> None:
+    """Reconecta de a uno cada respondedor configurado por
+    `run_one_to_many` para pararlo (`STOP`) y apagarlo prolijamente --
+    siguen corriendo `RESPF` sin conexion BLE activa (ver docstring de esa
+    funcion). Una falla reconectando a alguno no debe impedir limpiar el
+    resto."""
+    for responder in responders:
+        try:
+            transport, client = _open_and_confirm_none(
+                make_transport,
+                responder.mac,
+                command_timeout_s=command_timeout_s,
+                label=responder.nombre,
+            )
+        except MeasureError as exc:
+            logger.warning(
+                "%s: no se pudo reconectar para la limpieza final (se ignora): %s",
+                responder.nombre,
+                exc,
+            )
+            continue
+        _stop_quietly(client)
+        _safe_power_off(transport)
+        transport.close()
+
+
 def _default_transport_factory(ble_timeouts: Mapping[str, float]) -> _TransportFactory:
     connect_timeout_s = ble_timeouts.get("connection_timeout", _DEFAULT_CONNECTION_TIMEOUT_S)
     write_timeout_s = ble_timeouts.get("command_timeout", _DEFAULT_COMMAND_TIMEOUT_S)
@@ -450,6 +624,41 @@ def _collect_success_samples(
                 _keep_responder_alive(keepalive_client)
                 last_keepalive = now
     return successes
+
+
+def _collect_success_samples_multi(
+    client: DwmCliClient,
+    *,
+    session: SessionParams,
+    n_samples: int,
+    samples_by_addr: dict[int, list[int]],
+) -> None:
+    """Como `_collect_success_samples`, pero para `run_one_to_many`:
+    demultiplexa cada muestra `SUCCESS` por `mac_address` en
+    `samples_by_addr` (modificado in-place), y sigue hasta que **todos**
+    los respondedores junten `n_samples` muestras o se agote el tiempo
+    estimado.
+
+    Sin keepalive: en modo uno-a-muchos los respondedores no tienen
+    conexion BLE activa durante el muestreo (ver `run_one_to_many`), asi
+    que no hace falta mantener nada vivo del lado del respondedor.
+    """
+    limit_s = n_samples * session.block_ms * 3 / 1000
+    deadline = time.monotonic() + limit_s
+    while any(len(samples) < n_samples for samples in samples_by_addr.values()):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        window_s = min(remaining, session.block_ms * 3 / 1000)
+        for measurement in client.read_notifications(duration_s=window_s, max_count=1):
+            if measurement.status != "SUCCESS" or measurement.distance_cm is None:
+                continue
+            try:
+                addr = int(measurement.mac_address, 16)
+            except ValueError:
+                continue
+            if addr in samples_by_addr:
+                samples_by_addr[addr].append(measurement.distance_cm)
 
 
 def _keep_responder_alive(client: DwmCliClient) -> None:
