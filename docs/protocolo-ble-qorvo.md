@@ -188,8 +188,9 @@ sin tocar la app `RESPF` en curso.
 > la ayuda del firmware (`HELP INITF`/`HELP RESPF`) para el detalle que no
 > cubre `HELP`. Implementado en `ranging.pair_runner.run_one_to_many` /
 > `ranging.session.initiator_kwargs_multi` / `responder_kwargs_multi` —
-> modo **experimental**, opt-in (`--one-to-many` en la CLI), no reemplaza
-> el flujo por defecto (`ranging.campaign.run_campaign`).
+> modo **experimental**, opt-in (`--one-to-many` en la CLI, selector "Modo
+> de medición" en la GUI desde 2026-09-11), no reemplaza el flujo por
+> defecto (`ranging.campaign.run_campaign`).
 
 Un iniciador puede rangear contra varios respondedores dentro de la misma
 sesión FiRa (`MULTI_NODE_MODE: ONE_TO_MANY` en vez de `UNICAST`), en vez de

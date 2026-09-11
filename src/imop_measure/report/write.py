@@ -121,9 +121,8 @@ def _render_resumen_table(resumen: dict[str, int]) -> list[str]:
 
 def _render_detalle_table(results: list[PairResult]) -> list[str]:
     lines = [
-        "| # | Dirección | Distancia calculada (m) | Distancia medida (m) | "
-        "Mínimo (cm) | Máximo (cm) | Moda (cm) | Desviación (cm) | "
-        "Diferencia (m) | Diferencia (%) | Estado |",
+        "| # | Dirección | Calculada (m) | Promedio (m) | Mínimo (m) | Máximo (m) | "
+        "Moda (m) | Desviación (m) | Diferencia (m) | Diferencia (%) | Estado |",
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i, result in enumerate(results, start=1):
@@ -131,20 +130,19 @@ def _render_detalle_table(results: list[PairResult]) -> list[str]:
     return lines
 
 
-def _fmt_cm(value: float | None) -> str:
-    return f"{value:.1f}" if value is not None else "—"
+def _fmt_m(value: float | None) -> str:
+    return f"{value:.3f}" if value is not None else "—"
 
 
 def _render_row(result: PairResult) -> str:
     direccion = f"{result.initiator} → {result.responder}"
-    medida = f"{result.distance_measured_m:.3f}" if result.distance_measured_m is not None else "—"
     diff_m = f"{result.diff_m:+.3f}" if result.diff_m is not None else "—"
     diff_pct = f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "—"
     icono = _ESTADO_ICONO[result.estado]
     return (
-        f"{direccion} | {result.distance_calc_m:.3f} | {medida} | "
-        f"{_fmt_cm(result.min_measured_cm)} | {_fmt_cm(result.max_measured_cm)} | "
-        f"{_fmt_cm(result.mode_measured_cm)} | {_fmt_cm(result.std_measured_cm)} | "
+        f"{direccion} | {result.distance_calc_m:.3f} | {_fmt_m(result.distance_measured_m)} | "
+        f"{_fmt_m(result.min_measured_m)} | {_fmt_m(result.max_measured_m)} | "
+        f"{_fmt_m(result.mode_measured_m)} | {_fmt_m(result.std_measured_m)} | "
         f"{diff_m} | {diff_pct} | {icono} {result.estado}"
     )
 

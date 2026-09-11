@@ -16,10 +16,10 @@ PASS_RESULT = PairResult(
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
-    std_measured_cm=2.1,
-    min_measured_cm=497.0,
-    max_measured_cm=503.0,
-    mode_measured_cm=500.0,
+    std_measured_m=0.021,
+    min_measured_m=4.97,
+    max_measured_m=5.03,
+    mode_measured_m=5.00,
 )
 FAIL_RESULT = PairResult(
     initiator="UWB-Node-11",
@@ -75,9 +75,9 @@ def test_write_reports_json_content(tmp_path: Path) -> None:
     assert payload["resumen"] == {"pass": 1, "fail": 0, "error": 1, "total": 2}
     assert len(payload["resultados"]) == 2
     assert payload["resultados"][0]["initiator"] == "UWB-Node-10"
-    assert payload["resultados"][0]["min_measured_cm"] == 497.0
-    assert payload["resultados"][0]["max_measured_cm"] == 503.0
-    assert payload["resultados"][0]["mode_measured_cm"] == 500.0
+    assert payload["resultados"][0]["min_measured_m"] == 4.97
+    assert payload["resultados"][0]["max_measured_m"] == 5.03
+    assert payload["resultados"][0]["mode_measured_m"] == 5.00
     assert payload["resultados"][1]["detalle"] == "sin mediciones SUCCESS recibidas"
 
 
@@ -119,14 +119,13 @@ def test_write_reports_markdown_shows_std_min_max_mode(tmp_path: Path) -> None:
 
     content = md_path.read_text(encoding="utf-8")
 
-    assert "Mínimo (cm)" in content
-    assert "Máximo (cm)" in content
-    assert "Moda (cm)" in content
-    assert "Desviación (cm)" in content
-    assert "497.0" in content  # PASS_RESULT.min_measured_cm
-    assert "503.0" in content  # PASS_RESULT.max_measured_cm
-    assert "500.0" in content  # PASS_RESULT.mode_measured_cm
-    assert "2.1" in content  # PASS_RESULT.std_measured_cm
+    assert "Mínimo (m)" in content
+    assert "Máximo (m)" in content
+    assert "Moda (m)" in content
+    assert "Desviación (m)" in content
+    assert "4.970" in content  # PASS_RESULT.min_measured_m
+    assert "5.030" in content  # PASS_RESULT.max_measured_m
+    assert "0.021" in content  # PASS_RESULT.std_measured_m
     # ERROR_RESULT no junto muestras: las columnas muestran "-", no numeros.
     assert "| — | — | — | — | — | — | — | ❌ ERROR |" in content
 

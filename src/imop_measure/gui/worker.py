@@ -14,7 +14,7 @@ from typing import Protocol
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from imop_measure.config.loader import load_ambiente
-from imop_measure.ranging.campaign import run_campaign
+from imop_measure.ranging.campaign import run_campaign, run_campaign_one_to_many
 from imop_measure.ranging.pair_runner import MeasuredPair
 from imop_measure.ranging.session import SessionParams
 from imop_measure.report.build import build_results
@@ -32,6 +32,13 @@ class CampaignWorker(QObject):
     excepcion en `run()` deja el hilo muerto en silencio y el boton de
     "Ejecutar" de `MainWindow` trabado para siempre, sin ningun mensaje
     (bug real documentado en el repo hermano).
+
+    `one_to_many` elige el motor: `False` (default) usa `run_campaign`
+    (una conexion BLE por direccion); `True` usa
+    `run_campaign_one_to_many` (todos los respondedores de un nodo
+    iniciador en una sola sesion FiRa -MULTI, mas rapido con varios nodos
+    -- ver `ranging.pair_runner.run_one_to_many`, modo experimental
+    verificado contra hardware real 2026-09-11).
     """
 
     pair_measured = Signal(object)  # PairResult, uno por direccion medida
@@ -46,12 +53,14 @@ class CampaignWorker(QObject):
         samples: int,
         tolerance_cm: float,
         report_dir: Path,
+        one_to_many: bool = False,
     ) -> None:
         super().__init__()
         self._environment_path = environment_path
         self._samples = samples
         self._tolerance_cm = tolerance_cm
         self._report_dir = report_dir
+        self._one_to_many = one_to_many
 
     @Slot()
     def run(self) -> None:
@@ -64,7 +73,8 @@ class CampaignWorker(QObject):
                 results.append(result)
                 self.pair_measured.emit(result)
 
-            run_campaign(
+            campaign_fn = run_campaign_one_to_many if self._one_to_many else run_campaign
+            campaign_fn(
                 ambiente,
                 session=SessionParams(),
                 n_samples=self._samples,

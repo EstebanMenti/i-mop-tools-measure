@@ -15,10 +15,10 @@ PASS_RESULT = PairResult(
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
-    std_measured_cm=2.1,
-    min_measured_cm=497.0,
-    max_measured_cm=503.0,
-    mode_measured_cm=500.0,
+    std_measured_m=0.021,
+    min_measured_m=4.97,
+    max_measured_m=5.03,
+    mode_measured_m=5.00,
 )
 ERROR_RESULT = PairResult(
     initiator="UWB-Node-11",
@@ -72,10 +72,10 @@ def test_data_formats_min_max_mode_std(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(PASS_RESULT)
 
-    assert model.data(model.index(0, 4)) == "497.0"  # Mínimo (cm)
-    assert model.data(model.index(0, 5)) == "503.0"  # Máximo (cm)
-    assert model.data(model.index(0, 6)) == "500.0"  # Moda (cm)
-    assert model.data(model.index(0, 7)) == "2.1"  # Desviación (cm)
+    assert model.data(model.index(0, 4)) == "4.970"  # Mínimo (m)
+    assert model.data(model.index(0, 5)) == "5.030"  # Máximo (m)
+    assert model.data(model.index(0, 6)) == "5.000"  # Moda (m)
+    assert model.data(model.index(0, 7)) == "0.021"  # Desviación (m)
 
 
 def test_data_formats_signed_diff(qtbot: object) -> None:
@@ -102,7 +102,7 @@ def test_header_data(qtbot: object) -> None:
     model = CampaignResultsModel()
 
     assert model.headerData(0, Qt.Orientation.Horizontal) == "Iniciador"
-    assert model.headerData(7, Qt.Orientation.Horizontal) == "Desviación (cm)"
+    assert model.headerData(7, Qt.Orientation.Horizontal) == "Desviación (m)"
     assert model.headerData(10, Qt.Orientation.Horizontal) == "Estado"
 
 

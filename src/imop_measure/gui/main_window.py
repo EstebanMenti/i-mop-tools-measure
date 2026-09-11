@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, QTimer
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QTableView,
     QVBoxLayout,
@@ -143,6 +145,19 @@ class MainWindow(QMainWindow):
         self._tolerance_spin.setValue(DEFAULT_TOLERANCE_CM)
         form.addRow("Tolerancia PASS/FAIL:", self._tolerance_spin)
 
+        self._mode_one_to_one = QRadioButton("Uno a uno (una conexión BLE por dirección)")
+        self._mode_one_to_one.setChecked(True)
+        self._mode_one_to_many = QRadioButton(
+            "Uno a muchos (todos los respondedores a la vez — experimental)"
+        )
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.addButton(self._mode_one_to_one)
+        self._mode_group.addButton(self._mode_one_to_many)
+        mode_row = QVBoxLayout()
+        mode_row.addWidget(self._mode_one_to_one)
+        mode_row.addWidget(self._mode_one_to_many)
+        form.addRow("Modo de medición:", mode_row)
+
         self._report_dir_edit = QLineEdit(_DEFAULT_REPORT_DIR)
         report_dir_browse_btn = QPushButton("Examinar…")
         report_dir_browse_btn.clicked.connect(self._on_browse_report_dir_clicked)
@@ -186,6 +201,8 @@ class MainWindow(QMainWindow):
 
         self._model.clear()
         self._run_btn.setEnabled(False)
+        self._mode_one_to_one.setEnabled(False)
+        self._mode_one_to_many.setEnabled(False)
         self._status_label.setText("Midiendo…")
         self._report_label.setText("")
         self._action_label.setText("")
@@ -199,6 +216,7 @@ class MainWindow(QMainWindow):
             samples=self._samples_spin.value(),
             tolerance_cm=self._tolerance_spin.value(),
             report_dir=Path(self._report_dir_edit.text()),
+            one_to_many=self._mode_one_to_many.isChecked(),
         )
         thread = start_worker(worker)
         worker.pair_measured.connect(self._model.add_result)
@@ -247,6 +265,8 @@ class MainWindow(QMainWindow):
         self._update_time_label()
         self._progress_bar.setValue(100)
         self._run_btn.setEnabled(True)
+        self._mode_one_to_one.setEnabled(True)
+        self._mode_one_to_many.setEnabled(True)
         self._action_label.setText("")
         pass_n = sum(1 for r in results if r.estado == "PASS")
         fail_n = sum(1 for r in results if r.estado == "FAIL")
@@ -257,5 +277,7 @@ class MainWindow(QMainWindow):
     def _on_failed(self, message: str) -> None:
         self._progress_timer.stop()
         self._run_btn.setEnabled(True)
+        self._mode_one_to_one.setEnabled(True)
+        self._mode_one_to_many.setEnabled(True)
         self._action_label.setText("")
         self._status_label.setText(f"Error: {message}")

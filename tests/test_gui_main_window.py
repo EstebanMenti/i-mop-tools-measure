@@ -24,6 +24,8 @@ def test_main_window_constructs_with_expected_defaults(qtbot: object) -> None:
     assert window._environment_edit.text() == "environments/sala_20.toml"
     assert window._samples_spin.value() == 30
     assert window._tolerance_spin.value() == DEFAULT_TOLERANCE_CM
+    assert window._mode_one_to_one.isChecked()  # modo por defecto: uno a uno
+    assert not window._mode_one_to_many.isChecked()
     assert window._report_dir_edit.text() == "reports"
     assert window._run_btn.isEnabled()
 
@@ -122,6 +124,45 @@ def test_time_label_uses_initial_estimate_before_first_result(qtbot: object) -> 
     window._update_time_label()
 
     assert "Estimado total: 5m 00s" in window._time_label.text()
+
+
+def test_on_run_clicked_passes_selected_mode_to_worker(
+    qtbot: object, monkeypatch: object, tmp_path: Path
+) -> None:
+    """El selector de modo (radio buttons) debe pasarse tal cual a
+    `CampaignWorker.one_to_many` -- no reimplementa el enrutamiento entre
+    `run_campaign`/`run_campaign_one_to_many`, solo lo cablea (ver
+    test_gui_worker.py para esa logica en si). Se reemplaza `run()` por un
+    fake que emite `finished` de inmediato, para no tocar BLE real ni dejar
+    el QThread colgado esperando una señal que nunca llega.
+    """
+    toml_path = tmp_path / "sala_99.toml"
+    toml_path.write_text(
+        '[sala]\nid = "99"\n\n'
+        '[[anchors]]\nkey = "a"\nnombre = "A"\nmac = "00:00:00:00:00:01"\n'
+        'uwb_addr = "00:01"\nposicion = [0.0, 0.0, 0.0]\ntiempo_prendido = "60s"\n\n'
+        '[[anchors]]\nkey = "b"\nnombre = "B"\nmac = "00:00:00:00:00:02"\n'
+        'uwb_addr = "00:02"\nposicion = [3.0, 4.0, 0.0]\ntiempo_prendido = "60s"\n',
+        encoding="utf-8",
+    )
+
+    def fake_run(self: object) -> None:
+        self.finished.emit([], tmp_path / "x.json", tmp_path / "x.md")  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "imop_measure.gui.worker.CampaignWorker.run", fake_run
+    )
+
+    window = MainWindow()
+    qtbot.addWidget(window)  # type: ignore[attr-defined]
+    window._environment_edit.setText(str(toml_path))
+    window._mode_one_to_many.setChecked(True)
+
+    window._on_run_clicked()
+    qtbot.waitUntil(lambda: window._run_btn.isEnabled())  # type: ignore[attr-defined]
+
+    assert window._worker is not None
+    assert window._worker._one_to_many is True
 
 
 def test_time_label_switches_to_adaptive_estimate_after_a_result(qtbot: object) -> None:

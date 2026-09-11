@@ -45,7 +45,11 @@ incluye un `ERROR` real (fallo transitorio de conexión BLE, esperable en
 BLE) y un `FAIL` (la diferencia supera la tolerancia, ver sección 5). Los
 valores de `Mínimo`/`Máximo`/`Moda` son ilustrativos (esta captura es de
 antes de agregar esas columnas, 2026-09-11) — el resto de la fila es la
-medición real:
+medición real. **[2026-09-11]** Todas las columnas de distancia se
+expresan en metros (antes `Mínimo`/`Máximo`/`Moda`/`Desviación` estaban
+en cm, distinto del resto) — pedido explícito del usuario, para poder
+comparar `Calculada`/`Promedio`/`Mínimo`/`Máximo` de un vistazo sin
+convertir unidades mentalmente:
 
 ```markdown
 # Reporte de Medición de Distancia UWB — Sala 20 - Configuración Real (ID 20)
@@ -65,9 +69,9 @@ medición real:
 
 ## Detalle de mediciones
 
-| # | Dirección | Distancia calculada (m) | Distancia medida (m) | Mínimo (cm) | Máximo (cm) | Moda (cm) | Desviación (cm) | Diferencia (m) | Diferencia (%) | Estado |
+| # | Dirección | Calculada (m) | Promedio (m) | Mínimo (m) | Máximo (m) | Moda (m) | Desviación (m) | Diferencia (m) | Diferencia (%) | Estado |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 342.0 | 351.0 | 345.0 | 2.1 | +2.873 | +485.7% | ⚠️ FAIL |
+| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 3.420 | 3.510 | 3.450 | 0.021 | +2.873 | +485.7% | ⚠️ FAIL |
 | 2 | UWB-Node-11 → UWB-Node-10 | 0.592 | — | — | — | — | — | — | — | ❌ ERROR |
 
 ## Mediciones que requieren revisión
@@ -108,10 +112,10 @@ Markdown termina en la tabla de detalle.
       "n_samples_requested": 15,
       "estado": "FAIL",
       "detalle": null,
-      "std_measured_cm": 2.1,
-      "min_measured_cm": 342.0,
-      "max_measured_cm": 351.0,
-      "mode_measured_cm": 345.0
+      "std_measured_m": 0.021,
+      "min_measured_m": 3.42,
+      "max_measured_m": 3.51,
+      "mode_measured_m": 3.45
     },
     {
       "initiator": "UWB-Node-11",
@@ -124,10 +128,10 @@ Markdown termina en la tabla de detalle.
       "n_samples_requested": 15,
       "estado": "ERROR",
       "detalle": "",
-      "std_measured_cm": null,
-      "min_measured_cm": null,
-      "max_measured_cm": null,
-      "mode_measured_cm": null
+      "std_measured_m": null,
+      "min_measured_m": null,
+      "max_measured_m": null,
+      "mode_measured_m": null
     }
   ]
 }
@@ -159,10 +163,10 @@ Campos de cada entrada de `resultados` (`PairResult`, ver
 | `n_samples_requested` | int | Cuántas se pidieron (`--samples`). |
 | `estado` | `"PASS"` \| `"FAIL"` \| `"ERROR"` | Ver sección 5. |
 | `detalle` | string \| null | Mensaje de error si hubo una falla real (conexión, timeout, excepción) — `null` si la única "falla" fue estar fuera de tolerancia. |
-| `std_measured_cm` | float \| null | Desviación estándar (poblacional) de las muestras `SUCCESS` de esa dirección, en cm. Mide la dispersión **entre las propias muestras**, algo distinto de `diff_m`/`diff_pct` (que comparan el *promedio* contra lo calculado) — ver sección 6. `null` si `estado="ERROR"`. |
-| `min_measured_cm` | float \| null | Valor mínimo entre las muestras `SUCCESS` de esa dirección, en cm. `null` si `estado="ERROR"`. |
-| `max_measured_cm` | float \| null | Valor máximo entre las muestras `SUCCESS` de esa dirección, en cm. `null` si `estado="ERROR"`. |
-| `mode_measured_cm` | float \| null | Valor más frecuente (moda) entre las muestras `SUCCESS` de esa dirección, en cm — ante empate, el primero encontrado (`statistics.mode`). `null` si `estado="ERROR"`. |
+| `std_measured_m` | float \| null | Desviación estándar (poblacional) de las muestras `SUCCESS` de esa dirección, en metros. Mide la dispersión **entre las propias muestras**, algo distinto de `diff_m`/`diff_pct` (que comparan el *promedio* contra lo calculado) — ver sección 6. `null` si `estado="ERROR"`. |
+| `min_measured_m` | float \| null | Valor mínimo entre las muestras `SUCCESS` de esa dirección, en metros. `null` si `estado="ERROR"`. |
+| `max_measured_m` | float \| null | Valor máximo entre las muestras `SUCCESS` de esa dirección, en metros. `null` si `estado="ERROR"`. |
+| `mode_measured_m` | float \| null | Valor más frecuente (moda) entre las muestras `SUCCESS` de esa dirección, en metros — ante empate, el primero encontrado (`statistics.mode`). `null` si `estado="ERROR"`. |
 
 ## 5. Cómo se calcula `estado`
 
@@ -191,21 +195,21 @@ de interpretar un `FAIL` como "el enlace UWB anda mal", revisar
 casi), el problema más probable es que `posicion` no esté actualizado,
 no la medición.
 
-## 7. `diff_m` vs. `std_measured_cm`: dos preguntas distintas
+## 7. `diff_m` vs. `std_measured_m`: dos preguntas distintas
 
 `diff_m`/`diff_pct` comparan el **promedio** de las muestras contra la
 distancia calculada — responden "¿la posición declarada es correcta?".
-`std_measured_cm` (columna "Desviación (cm)" en el Markdown) mide qué tan
+`std_measured_m` (columna "Desviación (m)" en el Markdown) mide qué tan
 dispersas están las muestras **entre sí** — responde "¿la medición en sí
 es confiable, o el promedio salió de valores erráticos?". Son
 independientes: dos direcciones pueden tener el mismo `diff_m` con
 lecturas muy distintas de fondo:
 
-- **`diff_m` grande, `std_measured_cm` chico (pocos cm):** las muestras
+- **`diff_m` grande, `std_measured_m` chico (pocos cm):** las muestras
   son consistentes entre sí, solo que lejos de lo calculado — típicamente
   `posicion` desactualizada en el TOML (ver sección 6), no un problema de
   medición.
-- **`diff_m` chico, `std_measured_cm` grande:** el promedio cayó cerca de
+- **`diff_m` chico, `std_measured_m` grande:** el promedio cayó cerca de
   lo calculado, pero de casualidad — las muestras individuales están muy
   dispersas (multipath severo, interferencia, nodo mal ubicado
   físicamente). Vale la pena desconfiar de esta fila aunque el `estado`
@@ -214,15 +218,18 @@ lecturas muy distintas de fondo:
   la posición declarada.
 
 Como referencia, `docs/protocolo-ble-qorvo.md` documenta una desviación
-típica de ~2 cm contra hardware real en condiciones normales; una
-desviación de varios cm o más en una fila puntual es señal de revisarla,
-aunque su `diff_m` esté dentro de tolerancia.
+típica de ~2 cm (0.02 m) contra hardware real en condiciones normales;
+una desviación de varios cm o más en una fila puntual es señal de
+revisarla, aunque su `diff_m` esté dentro de tolerancia.
 
-Las columnas "Mínimo (cm)"/"Máximo (cm)"/"Moda (cm)" complementan a
-`std_measured_cm` con la misma pregunta ("¿qué tan confiable es la
+Las columnas "Mínimo (m)"/"Máximo (m)"/"Moda (m)" complementan a
+`std_measured_m` con la misma pregunta ("¿qué tan confiable es la
 medición en sí?"), en formato más directo de leer de un vistazo: el
 rango `[Mínimo, Máximo]` muestra la dispersión real de las muestras
 (no solo su desviación estándar), y la moda muestra el valor individual
 más repetido — útil para distinguir una dispersión simétrica (ruido
 normal de multipath) de una con valores atípicos puntuales que
-distorsionan el promedio.
+distorsionan el promedio. Todas las columnas de distancia (`Calculada`,
+`Promedio`, `Mínimo`, `Máximo`, `Moda`, `Desviación`, `Diferencia`) se
+expresan en la misma unidad (metros) a propósito, para poder
+compararlas de un vistazo sin convertir mentalmente entre cm y m.

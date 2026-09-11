@@ -412,11 +412,17 @@ un ejemplo real:
 **[2026-09-11, pedido explícito del usuario]** `necesita_revision` y
 `--review-threshold-cm` se **eliminaron** — el usuario los consideraba
 redundantes con `estado`/`--tolerance-cm` (que ya cubre la señal de
-"algo anda mal" en esta fila). En su lugar se agregaron `min_measured_cm`/
-`max_measured_cm`/`mode_measured_cm` a `PairResult`, estadísticas
-descriptivas de las propias muestras (igual que `std_measured_cm`, no
-comparan contra lo calculado) — ver
-[formato-reporte.md](formato-reporte.md) para el esquema vigente.
+"algo anda mal" en esta fila). En su lugar se agregaron `min_measured_m`/
+`max_measured_m`/`mode_measured_m` a `PairResult`, estadísticas
+descriptivas de las propias muestras (igual que `std_measured_m`, no
+comparan contra lo calculado). Ese mismo día, a pedido del usuario, se
+convirtieron `std_measured_m`/`min_measured_m`/`max_measured_m`/
+`mode_measured_m` de cm a **metros** (antes `_cm`, con valores en
+centímetros distintos del resto de la fila) — así todas las columnas de
+distancia (`Calculada`, `Promedio`, `Mínimo`, `Máximo`, `Moda`,
+`Desviación`, `Diferencia`) quedan en la misma unidad, comparables de un
+vistazo — ver [formato-reporte.md](formato-reporte.md) para el esquema
+vigente.
 
 ## 8. F6 — CLI
 
@@ -487,8 +493,8 @@ Módulos (`src/imop_measure/gui/`):
 |---|---|
 | `app.py` | Entry point `main_gui()` (comando `imop-measure-gui`): crea `QApplication` + `MainWindow`. |
 | `models.py` | `CampaignResultsModel(QAbstractTableModel)`: misma tabla que el resumen del CLI (iniciador, respondedor, calculada, medida, mínimo/máximo/moda/desviación, diferencia m/%, estado), coloreada por `estado`. Se llena fila por fila a medida que llegan resultados, no de una vez al final. |
-| `worker.py` | `CampaignWorker(QObject)`: `run()` hace `load_ambiente` → `ranging.campaign.run_campaign` (cada `on_pair_done` arma un `PairResult` de a uno vía `report.build.build_results([medido], ...)` y lo emite por señal `pair_measured`, acumulándolo también en una lista local) → `report.write.write_reports` con esa lista acumulada. Señales: `pair_measured(object)`, `finished(list, object, object)` (resultados, path json, path md), `failed(str)`. También expone `start_worker()`. |
-| `main_window.py` | `MainWindow(QMainWindow)`: formulario (archivo de ambiente con selector `QFileDialog`, muestras, tolerancia, carpeta de reportes — mismos parámetros que `imop-measure run`), botón "Ejecutar campaña", tabla en vivo, etiqueta de estado/resumen, etiqueta con las rutas del reporte al terminar. |
+| `worker.py` | `CampaignWorker(QObject)`: `run()` hace `load_ambiente` → `run_campaign` o `run_campaign_one_to_many` (según el flag `one_to_many`, mismo enrutamiento que `--one-to-many` en la CLI — ver `docs/protocolo-ble-qorvo.md` §3.2) (cada `on_pair_done` arma un `PairResult` de a uno vía `report.build.build_results([medido], ...)` y lo emite por señal `pair_measured`, acumulándolo también en una lista local) → `report.write.write_reports` con esa lista acumulada. Señales: `pair_measured(object)`, `finished(list, object, object)` (resultados, path json, path md), `failed(str)`. También expone `start_worker()`. |
+| `main_window.py` | `MainWindow(QMainWindow)`: formulario (archivo de ambiente con selector `QFileDialog`, muestras, tolerancia, selector de modo "uno a uno"/"uno a muchos" con `QRadioButton`, carpeta de reportes — mismos parámetros que `imop-measure run`), botón "Ejecutar campaña", tabla en vivo, etiqueta de estado/resumen, etiqueta con las rutas del reporte al terminar. |
 
 **Dependencias:** solo `PySide6` por ahora. `pyqtgraph` se saca de
 `pyproject.toml` extra `[gui]` hasta que haga falta un gráfico de verdad
