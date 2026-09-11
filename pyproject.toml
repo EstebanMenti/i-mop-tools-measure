@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "i-mop-tools-measure"
-version = "0.1.1"
+version = "0.1.2"
 description = "Mide distancia real entre nodos UWB y la compara contra la distancia geometrica calculada."
 requires-python = ">=3.11"
 authors = [{ name = "Esteban Menti", email = "esteban.menti@gmail.com" }]
