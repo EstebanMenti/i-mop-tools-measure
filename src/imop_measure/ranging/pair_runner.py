@@ -23,7 +23,7 @@ from imop_measure.ranging.session import (
     responder_kwargs,
     responder_kwargs_multi,
 )
-from imop_measure.transport.ble_link import BleTransport
+from imop_measure.transport.ble_link import SAFETY_AUTO_OFF_HOLD_S, BleTransport
 
 logger = logging.getLogger(__name__)
 
@@ -443,11 +443,17 @@ def run_one_to_many(
     4. Cada respondedor configurado se reconecta de a uno al final para
        pararlo (`STOP`) y apagarlo (`power_off`) prolijamente.
 
-    Un respondedor que no logra conectarse o configurarse (tras
-    `_OPEN_RETRY_ATTEMPTS` reintentos) queda con `MeasuredPair.error` y no
-    participa de la ronda — el resto sigue sin verse afectado. Si el
-    iniciador no logra conectarse, todos los respondedores ya configurados
-    quedan en error (se reconectan igual para pararlos).
+    Un respondedor que no logra conectarse o configurarse tras
+    `_OPEN_RETRY_ATTEMPTS` reintentos no se descarta de entrada: queda
+    pendiente de una segunda pasada, que se hace recien despues de haber
+    intentado (y prendido) todos los demas respondedores de la ronda --
+    pedido explicito del usuario, para no perder un nodo por una falla de
+    conexion transitoria que ya se resolvio sola para cuando se termino de
+    configurar el resto. Solo si tambien falla esta segunda pasada queda
+    con `MeasuredPair.error` y afuera de la ronda; el resto sigue sin
+    verse afectado. Si el iniciador no logra conectarse, todos los
+    respondedores ya configurados quedan en error (se reconectan igual
+    para pararlos).
 
     [Por verificar en hardware]: no hay formula confirmada del maximo de
     respondedores que entran en una ronda (`session.round_slots`) — probado
@@ -463,36 +469,38 @@ def run_one_to_many(
     addr_init = uwb_addr_to_int(initiator.uwb_addr)
 
     configured: list[Anchor] = []
-    results: list[MeasuredPair] = []
-    for responder in responders:
-        addr_resp = uwb_addr_to_int(responder.uwb_addr)
-        try:
-            transport_resp, client_resp = _open_and_confirm_none(
+    errors_by_key: dict[str, str] = {}
+    pending = list(responders)
+    for attempt_pass in (1, 2):
+        still_pending: list[Anchor] = []
+        for responder in pending:
+            error = _configure_responder_multi(
                 make_transport,
-                responder.mac,
+                responder=responder,
+                addr_init=addr_init,
+                session=session,
                 command_timeout_s=command_timeout_s,
-                label=responder.nombre,
                 on_status=on_status,
             )
-        except MeasureError as exc:
-            logger.warning("No se pudo conectar %s como respondedor: %s", responder.nombre, exc)
-            results.append(_build_result(initiator, responder, [], n_samples, str(exc)))
-            continue
-        try:
-            _emit(on_status, f"Configurando {responder.nombre} (uno-a-muchos)...")
-            transport_resp.power_cycle()
-            client_resp.ensure_mode_none()
-            client_resp.start_respf(
-                **responder_kwargs_multi(session, addr=addr_resp, paddr=addr_init)
+            if error is None:
+                configured.append(responder)
+                errors_by_key.pop(responder.key, None)
+            else:
+                errors_by_key[responder.key] = error
+                still_pending.append(responder)
+        pending = still_pending
+        if pending and attempt_pass == 1:
+            nombres = ", ".join(r.nombre for r in pending)
+            _emit(
+                on_status,
+                f"Reintentando conexion con {len(pending)} respondedor(es) "
+                f"que fallaron ({nombres})...",
             )
-            configured.append(responder)
-        except MeasureError as exc:
-            logger.warning("Fallo configurando RESPF en %s: %s", responder.nombre, exc)
-            results.append(_build_result(initiator, responder, [], n_samples, str(exc)))
-        finally:
-            # No STOP ni power_off: sigue corriendo RESPF sin conexion BLE
-            # (ver docstring) hasta la limpieza final.
-            transport_resp.close()
+
+    results: list[MeasuredPair] = [
+        _build_result(initiator, responder, [], n_samples, errors_by_key[responder.key])
+        for responder in pending
+    ]
 
     if not configured:
         return results
@@ -545,6 +553,51 @@ def run_one_to_many(
     return results
 
 
+def _configure_responder_multi(
+    make_transport: _TransportFactory,
+    *,
+    responder: Anchor,
+    addr_init: int,
+    session: SessionParams,
+    command_timeout_s: float,
+    on_status: _StatusCallback | None,
+) -> str | None:
+    """Conecta y configura un unico respondedor para `run_one_to_many`
+    (`power_cycle()` + `RESPF -MULTI`), dejandolo corriendo sin conexion
+    BLE activa (ver docstring de esa funcion). Se llama una vez por
+    respondedor y por pasada (`run_one_to_many` la usa dos veces: la
+    primera vuelta y la segunda pasada sobre los que fallaron).
+
+    Devuelve `None` si tuvo exito, o el mensaje de error si no (conexion o
+    configuracion fallida tras `_OPEN_RETRY_ATTEMPTS` reintentos).
+    """
+    addr_resp = uwb_addr_to_int(responder.uwb_addr)
+    try:
+        transport_resp, client_resp = _open_and_confirm_none(
+            make_transport,
+            responder.mac,
+            command_timeout_s=command_timeout_s,
+            label=responder.nombre,
+            on_status=on_status,
+        )
+    except MeasureError as exc:
+        logger.warning("No se pudo conectar %s como respondedor: %s", responder.nombre, exc)
+        return str(exc)
+    try:
+        _emit(on_status, f"Configurando {responder.nombre} (uno-a-muchos)...")
+        transport_resp.power_cycle()
+        client_resp.ensure_mode_none()
+        client_resp.start_respf(**responder_kwargs_multi(session, addr=addr_resp, paddr=addr_init))
+        return None
+    except MeasureError as exc:
+        logger.warning("Fallo configurando RESPF en %s: %s", responder.nombre, exc)
+        return str(exc)
+    finally:
+        # No STOP ni power_off: sigue corriendo RESPF sin conexion BLE
+        # (ver docstring de run_one_to_many) hasta la limpieza final.
+        transport_resp.close()
+
+
 def _stop_configured_responders(
     make_transport: _TransportFactory,
     command_timeout_s: float,
@@ -581,7 +634,12 @@ def _default_transport_factory(ble_timeouts: Mapping[str, float]) -> _TransportF
 
     def factory(address: str) -> BleTransport:
         return BleTransport(
-            address, connect_timeout_s=connect_timeout_s, write_timeout_s=write_timeout_s
+            address,
+            connect_timeout_s=connect_timeout_s,
+            write_timeout_s=write_timeout_s,
+            # Apagado automatico de seguridad -- ver
+            # transport.ble_link.SAFETY_AUTO_OFF_HOLD_S.
+            power_on_hold_s=SAFETY_AUTO_OFF_HOLD_S,
         )
 
     return factory
