@@ -15,10 +15,12 @@ _HEADERS = (
     "Respondedor",
     "Calculada (m)",
     "Medida (m)",
+    "Mínimo (cm)",
+    "Máximo (cm)",
+    "Moda (cm)",
     "Desviación (cm)",
     "Diferencia (m)",
     "Diferencia (%)",
-    "Revisar",
     "Estado",
 )
 
@@ -38,6 +40,11 @@ _HEADER_TOOLTIPS = (
     "Igual en ambas direcciones de un mismo<br>"
     "par de nodos.",
     "Promedio de las muestras SUCCESS<br>medidas por UWB en esta dirección.",
+    "Valor mínimo entre las muestras<br>SUCCESS de esta dirección.",
+    "Valor máximo entre las muestras<br>SUCCESS de esta dirección.",
+    "Valor más frecuente (moda) entre las<br>"
+    "muestras SUCCESS de esta dirección —<br>"
+    "ante empate, el primero encontrado.",
     "Desviación estándar de las muestras<br>"
     "individuales entre sí (dispersión) —<br>"
     "NO es la diferencia contra la distancia<br>"
@@ -53,12 +60,6 @@ _HEADER_TOOLTIPS = (
     "calculada, con signo (positivo = se<br>"
     "midió más lejos de lo calculado).",
     "La diferencia anterior como porcentaje<br>de la distancia calculada.",
-    "Marca las direcciones cuya diferencia<br>"
-    "supera el umbral de revisión<br>"
-    "(--review-threshold-cm) — probablemente<br>"
-    "un error de datos (nodo equivocado,<br>"
-    "posición mal tipeada), no ruido normal<br>"
-    "de multipath.",
     "PASS si la diferencia está dentro de la<br>"
     "tolerancia (--tolerance-cm).<br>"
     "FAIL si la supera.<br>"
@@ -143,13 +144,17 @@ def _display_value(result: PairResult, column: int) -> str | None:
             return "-"
         return f"{result.distance_measured_m:.3f}"
     if column == 4:
-        return f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
+        return f"{result.min_measured_cm:.1f}" if result.min_measured_cm is not None else "-"
     if column == 5:
-        return f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
+        return f"{result.max_measured_cm:.1f}" if result.max_measured_cm is not None else "-"
     if column == 6:
-        return f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
+        return f"{result.mode_measured_cm:.1f}" if result.mode_measured_cm is not None else "-"
     if column == 7:
-        return "Si" if result.necesita_revision else "-"
+        return f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
     if column == 8:
+        return f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
+    if column == 9:
+        return f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
+    if column == 10:
         return result.estado
     return None

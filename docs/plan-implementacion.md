@@ -409,6 +409,15 @@ un ejemplo real:
   (`encoding="utf-8"` explícito) pero **no** en lo que se imprime a
   terminal — ver el hallazgo de F6 sobre la consola legacy de Windows.
 
+**[2026-09-11, pedido explícito del usuario]** `necesita_revision` y
+`--review-threshold-cm` se **eliminaron** — el usuario los consideraba
+redundantes con `estado`/`--tolerance-cm` (que ya cubre la señal de
+"algo anda mal" en esta fila). En su lugar se agregaron `min_measured_cm`/
+`max_measured_cm`/`mode_measured_cm` a `PairResult`, estadísticas
+descriptivas de las propias muestras (igual que `std_measured_cm`, no
+comparan contra lo calculado) — ver
+[formato-reporte.md](formato-reporte.md) para el esquema vigente.
+
 ## 8. F6 — CLI
 
 ```
@@ -477,9 +486,9 @@ Módulos (`src/imop_measure/gui/`):
 | Módulo | Responsabilidad |
 |---|---|
 | `app.py` | Entry point `main_gui()` (comando `imop-measure-gui`): crea `QApplication` + `MainWindow`. |
-| `models.py` | `CampaignResultsModel(QAbstractTableModel)`: misma tabla que el resumen del CLI (iniciador, respondedor, calculada, medida, diferencia m/%, revisar, estado), coloreada por `estado`. Se llena fila por fila a medida que llegan resultados, no de una vez al final. |
+| `models.py` | `CampaignResultsModel(QAbstractTableModel)`: misma tabla que el resumen del CLI (iniciador, respondedor, calculada, medida, mínimo/máximo/moda/desviación, diferencia m/%, estado), coloreada por `estado`. Se llena fila por fila a medida que llegan resultados, no de una vez al final. |
 | `worker.py` | `CampaignWorker(QObject)`: `run()` hace `load_ambiente` → `ranging.campaign.run_campaign` (cada `on_pair_done` arma un `PairResult` de a uno vía `report.build.build_results([medido], ...)` y lo emite por señal `pair_measured`, acumulándolo también en una lista local) → `report.write.write_reports` con esa lista acumulada. Señales: `pair_measured(object)`, `finished(list, object, object)` (resultados, path json, path md), `failed(str)`. También expone `start_worker()`. |
-| `main_window.py` | `MainWindow(QMainWindow)`: formulario (archivo de ambiente con selector `QFileDialog`, muestras, tolerancia, umbral de revisión, carpeta de reportes — mismos parámetros que `imop-measure run`), botón "Ejecutar campaña", tabla en vivo, etiqueta de estado/resumen, etiqueta con las rutas del reporte al terminar. |
+| `main_window.py` | `MainWindow(QMainWindow)`: formulario (archivo de ambiente con selector `QFileDialog`, muestras, tolerancia, carpeta de reportes — mismos parámetros que `imop-measure run`), botón "Ejecutar campaña", tabla en vivo, etiqueta de estado/resumen, etiqueta con las rutas del reporte al terminar. |
 
 **Dependencias:** solo `PySide6` por ahora. `pyqtgraph` se saca de
 `pyproject.toml` extra `[gui]` hasta que haga falta un gráfico de verdad
@@ -538,5 +547,4 @@ escrito correctamente. **La Fase F7 (v1) queda cerrada.**
 | `VUPPER` | `01:02:03:04:05:06:07:08` | ídem |
 | `n_samples` por dirección | 30 (`--samples`) | implementado, sin confirmar como valor final — `TODO(confirmar-con-usuario)` en `app/cli.py`/`gui/main_window.py` |
 | tolerancia PASS/FAIL | 5.0 cm (`--tolerance-cm`) | `DEFAULT_TOLERANCE_CM` en `report/build.py`, mismo estado de confirmación que arriba |
-| umbral de revisión (`necesita_revision`) | 30.0 cm (`--review-threshold-cm`) | `DEFAULT_REVIEW_THRESHOLD_CM` en `report/build.py` — ver [formato-reporte.md](formato-reporte.md) §5 |
 | `[ble_timeouts]` | ver `environments/sala_20.toml` | mismo esquema que `i-mop-qorvo-CLI-script` |

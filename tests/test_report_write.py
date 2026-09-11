@@ -13,20 +13,21 @@ PASS_RESULT = PairResult(
     distance_measured_m=5.0,
     diff_m=0.0,
     diff_pct=0.0,
-    necesita_revision=False,
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
     std_measured_cm=2.1,
+    min_measured_cm=497.0,
+    max_measured_cm=503.0,
+    mode_measured_cm=500.0,
 )
-REVISAR_RESULT = PairResult(
+FAIL_RESULT = PairResult(
     initiator="UWB-Node-11",
     responder="UWB-Node-12",
     distance_calc_m=5.0,
     distance_measured_m=5.4,
     diff_m=0.4,
     diff_pct=8.0,
-    necesita_revision=True,  # 40cm > umbral de revision (30cm default)
     n_samples_success=10,
     n_samples_requested=10,
     estado="FAIL",
@@ -38,7 +39,6 @@ ERROR_RESULT = PairResult(
     distance_measured_m=None,
     diff_m=None,
     diff_pct=None,
-    necesita_revision=False,
     n_samples_success=0,
     n_samples_requested=10,
     estado="ERROR",
@@ -64,7 +64,6 @@ def test_write_reports_json_content(tmp_path: Path) -> None:
         sala_nombre="Sala 20 - Configuración Real",
         samples=10,
         tolerance_cm=5.0,
-        review_threshold_cm=30.0,
         report_dir=tmp_path,
     )
 
@@ -72,14 +71,13 @@ def test_write_reports_json_content(tmp_path: Path) -> None:
 
     assert payload["ambiente"] == "20"
     assert payload["ambiente_nombre"] == "Sala 20 - Configuración Real"
-    assert payload["parametros"] == {
-        "muestras_por_direccion": 10,
-        "tolerancia_cm": 5.0,
-        "umbral_revision_cm": 30.0,
-    }
-    assert payload["resumen"] == {"pass": 1, "fail": 0, "error": 1, "revisar": 0, "total": 2}
+    assert payload["parametros"] == {"muestras_por_direccion": 10, "tolerancia_cm": 5.0}
+    assert payload["resumen"] == {"pass": 1, "fail": 0, "error": 1, "total": 2}
     assert len(payload["resultados"]) == 2
     assert payload["resultados"][0]["initiator"] == "UWB-Node-10"
+    assert payload["resultados"][0]["min_measured_cm"] == 497.0
+    assert payload["resultados"][0]["max_measured_cm"] == 503.0
+    assert payload["resultados"][0]["mode_measured_cm"] == 500.0
     assert payload["resultados"][1]["detalle"] == "sin mediciones SUCCESS recibidas"
 
 
@@ -116,15 +114,21 @@ def test_write_reports_markdown_shows_calc_measured_and_both_diffs(tmp_path: Pat
     assert "+0.0%" in content  # diferencia en %, con signo
 
 
-def test_write_reports_markdown_shows_std_measured(tmp_path: Path) -> None:
+def test_write_reports_markdown_shows_std_min_max_mode(tmp_path: Path) -> None:
     _, md_path = write_reports([PASS_RESULT, ERROR_RESULT], sala_id="20", report_dir=tmp_path)
 
     content = md_path.read_text(encoding="utf-8")
 
+    assert "Mínimo (cm)" in content
+    assert "Máximo (cm)" in content
+    assert "Moda (cm)" in content
     assert "Desviación (cm)" in content
+    assert "497.0" in content  # PASS_RESULT.min_measured_cm
+    assert "503.0" in content  # PASS_RESULT.max_measured_cm
+    assert "500.0" in content  # PASS_RESULT.mode_measured_cm
     assert "2.1" in content  # PASS_RESULT.std_measured_cm
-    # ERROR_RESULT no junto muestras: la columna muestra "-", no un numero.
-    assert "| — | — | ❌ ERROR |" in content
+    # ERROR_RESULT no junto muestras: las columnas muestran "-", no numeros.
+    assert "| — | — | — | — | — | — | — | ❌ ERROR |" in content
 
 
 def test_write_reports_markdown_pass_only_has_no_revision_section(tmp_path: Path) -> None:
@@ -144,14 +148,13 @@ def test_write_reports_markdown_includes_revision_section_for_errors(tmp_path: P
     assert "sin mediciones SUCCESS recibidas" in content
 
 
-def test_write_reports_markdown_flags_necesita_revision(tmp_path: Path) -> None:
-    _, md_path = write_reports([REVISAR_RESULT], sala_id="20", report_dir=tmp_path)
+def test_write_reports_markdown_includes_revision_section_for_fail(tmp_path: Path) -> None:
+    _, md_path = write_reports([FAIL_RESULT], sala_id="20", report_dir=tmp_path)
 
     content = md_path.read_text(encoding="utf-8")
 
-    assert "Sí" in content  # columna "Revisar" marcada
     assert "## Mediciones que requieren revisión" in content
-    assert "diferencia mayor al umbral de revisión" in content
+    assert "UWB-Node-11 → UWB-Node-12" in content
 
 
 def test_write_reports_creates_report_dir_if_missing(tmp_path: Path) -> None:

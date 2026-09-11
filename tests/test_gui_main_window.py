@@ -13,7 +13,7 @@ from pathlib import Path
 from imop_measure import __version__
 from imop_measure.gui.main_window import MainWindow, _format_duration
 from imop_measure.gui.worker import CampaignWorker
-from imop_measure.report.build import DEFAULT_REVIEW_THRESHOLD_CM, DEFAULT_TOLERANCE_CM
+from imop_measure.report.build import DEFAULT_TOLERANCE_CM
 
 
 def test_main_window_constructs_with_expected_defaults(qtbot: object) -> None:
@@ -24,7 +24,6 @@ def test_main_window_constructs_with_expected_defaults(qtbot: object) -> None:
     assert window._environment_edit.text() == "environments/sala_20.toml"
     assert window._samples_spin.value() == 30
     assert window._tolerance_spin.value() == DEFAULT_TOLERANCE_CM
-    assert window._review_threshold_spin.value() == DEFAULT_REVIEW_THRESHOLD_CM
     assert window._report_dir_edit.text() == "reports"
     assert window._run_btn.isEnabled()
 
@@ -81,7 +80,6 @@ def test_action_label_updates_from_worker_status_signal(qtbot: object) -> None:
         environment_path=Path("environments/sala_20.toml"),
         samples=1,
         tolerance_cm=DEFAULT_TOLERANCE_CM,
-        review_threshold_cm=DEFAULT_REVIEW_THRESHOLD_CM,
         report_dir=Path("reports"),
     )
     worker.status_update.connect(window._action_label.setText)

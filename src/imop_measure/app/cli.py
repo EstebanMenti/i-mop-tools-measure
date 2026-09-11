@@ -17,11 +17,7 @@ from imop_measure.errors import MeasureError
 from imop_measure.ranging.campaign import run_campaign, run_campaign_one_to_many
 from imop_measure.ranging.pair_runner import MeasuredPair
 from imop_measure.ranging.session import SessionParams
-from imop_measure.report.build import (
-    DEFAULT_REVIEW_THRESHOLD_CM,
-    DEFAULT_TOLERANCE_CM,
-    build_results,
-)
+from imop_measure.report.build import DEFAULT_TOLERANCE_CM, build_results
 from imop_measure.report.models import PairResult
 from imop_measure.report.write import write_reports
 
@@ -60,13 +56,6 @@ def run(
         float,
         typer.Option("--tolerance-cm", help="Tolerancia de error (cm) para marcar PASS/FAIL."),
     ] = DEFAULT_TOLERANCE_CM,
-    review_threshold_cm: Annotated[
-        float,
-        typer.Option(
-            "--review-threshold-cm",
-            help="Diferencia (cm) a partir de la cual una medición se marca 'a revisar'.",
-        ),
-    ] = DEFAULT_REVIEW_THRESHOLD_CM,
     report_dir: Annotated[
         Path, typer.Option("--report-dir", help="Carpeta donde escribir el reporte.")
     ] = Path("reports"),
@@ -115,16 +104,13 @@ def run(
                 ambiente, session=SessionParams(), n_samples=samples, on_pair_done=on_pair_done
             )
 
-        results = build_results(
-            measured_pairs, tolerance_cm=tolerance_cm, review_threshold_cm=review_threshold_cm
-        )
+        results = build_results(measured_pairs, tolerance_cm=tolerance_cm)
         json_path, md_path = write_reports(
             results,
             sala_id=ambiente.id,
             sala_nombre=ambiente.nombre,
             samples=samples,
             tolerance_cm=tolerance_cm,
-            review_threshold_cm=review_threshold_cm,
             report_dir=report_dir,
         )
 
@@ -137,28 +123,34 @@ def _print_summary(results: list[PairResult]) -> None:
     table.add_column("Dirección")
     table.add_column("Calculada (m)", justify="right")
     table.add_column("Medida (m)", justify="right")
+    table.add_column("Mínimo (cm)", justify="right")
+    table.add_column("Máximo (cm)", justify="right")
+    table.add_column("Moda (cm)", justify="right")
     table.add_column("Desviación (cm)", justify="right")
     table.add_column("Diferencia (m)", justify="right")
     table.add_column("Diferencia (%)", justify="right")
-    table.add_column("Revisar")
     table.add_column("Estado")
     for result in results:
         medida = (
             f"{result.distance_measured_m:.3f}" if result.distance_measured_m is not None else "-"
         )
+        minimo = f"{result.min_measured_cm:.1f}" if result.min_measured_cm is not None else "-"
+        maximo = f"{result.max_measured_cm:.1f}" if result.max_measured_cm is not None else "-"
+        moda = f"{result.mode_measured_cm:.1f}" if result.mode_measured_cm is not None else "-"
         desviacion = f"{result.std_measured_cm:.1f}" if result.std_measured_cm is not None else "-"
         diff_m = f"{result.diff_m:+.3f}" if result.diff_m is not None else "-"
         diff_pct = f"{result.diff_pct:+.1f}%" if result.diff_pct is not None else "-"
-        revisar = "[bold red]SI[/bold red]" if result.necesita_revision else "-"
         estilo = {"PASS": "green", "FAIL": "yellow", "ERROR": "red"}[result.estado]
         table.add_row(
             f"{result.initiator} -> {result.responder}",
             f"{result.distance_calc_m:.3f}",
             medida,
+            minimo,
+            maximo,
+            moda,
             desviacion,
             diff_m,
             diff_pct,
-            revisar,
             f"[{estilo}]{result.estado}[/{estilo}]",
         )
     console.print(table)

@@ -91,7 +91,7 @@ no se pueden invocar por error).
 
 | Módulo | Responsabilidad |
 |---|---|
-| `models.py` | `PairResult` (iniciador, respondedor, distancia calculada, distancia medida, `diff_m`/`diff_pct` con signo, `necesita_revision`, n_muestras, estado, detalle) — una fila por **dirección** medida, no por par físico (ver decisión D6). Esquema completo con ejemplo real en [formato-reporte.md](formato-reporte.md). |
+| `models.py` | `PairResult` (iniciador, respondedor, distancia calculada, distancia medida, `diff_m`/`diff_pct` con signo, mínimo/máximo/moda/desviación de las muestras, n_muestras, estado, detalle) — una fila por **dirección** medida, no por par físico (ver decisión D6). Esquema completo con ejemplo real en [formato-reporte.md](formato-reporte.md). |
 | `build.py` | Arma el resumen (PASS = medición dentro de tolerancia, FAIL = fuera de tolerancia, ERROR = no se pudo medir) a partir de una lista de `PairResult`. |
 | `write.py` | Escribe `reports/medicion-<sala>-<timestamp>.json` y `.md`, mismo patrón que `validation/report.py` del repo hermano. |
 

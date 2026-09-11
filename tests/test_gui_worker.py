@@ -70,7 +70,6 @@ def test_worker_emits_pair_measured_and_finished(qtbot: object, tmp_path: Path) 
         environment_path=tmp_path / "sala_99.toml",
         samples=1,
         tolerance_cm=5.0,
-        review_threshold_cm=30.0,
         report_dir=tmp_path,
     )
     pairs_seen: list[object] = []
@@ -103,7 +102,6 @@ def test_worker_emits_failed_on_missing_environment_file(qtbot: object, tmp_path
         environment_path=tmp_path / "no_existe.toml",
         samples=1,
         tolerance_cm=5.0,
-        review_threshold_cm=30.0,
         report_dir=tmp_path,
     )
     failed_messages: list[str] = []
@@ -123,7 +121,6 @@ def test_worker_never_lets_unexpected_exception_escape(qtbot: object, tmp_path: 
         environment_path=tmp_path / "sala_99.toml",
         samples=1,
         tolerance_cm=5.0,
-        review_threshold_cm=30.0,
         report_dir=tmp_path,
     )
     failed_messages: list[str] = []
