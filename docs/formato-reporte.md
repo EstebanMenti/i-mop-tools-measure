@@ -42,8 +42,10 @@ entre una dirección y la otra.
 
 Captura real contra hardware, `environments/sala_20.toml`, 2026-09-07 —
 incluye un `ERROR` real (fallo transitorio de conexión BLE, esperable en
-BLE) y un `FAIL` marcado "a revisar" (la diferencia supera el umbral de
-30 cm, ver sección 5):
+BLE) y un `FAIL` (la diferencia supera la tolerancia, ver sección 5). Los
+valores de `Mínimo`/`Máximo`/`Moda` son ilustrativos (esta captura es de
+antes de agregar esas columnas, 2026-09-11) — el resto de la fila es la
+medición real:
 
 ```markdown
 # Reporte de Medición de Distancia UWB — Sala 20 - Configuración Real (ID 20)
@@ -51,33 +53,32 @@ BLE) y un `FAIL` marcado "a revisar" (la diferencia supera el umbral de
 **Fecha y hora de generación:** 07/09/2026 15:32:16 UTC-0300
 **Ambiente:** Sala 20 - Configuración Real (ID 20)
 **Muestras por dirección:** 15
-**Criterios:** tolerancia ±5.0 cm para PASS/FAIL · umbral de revisión ±30 cm
+**Criterios:** tolerancia ±5.0 cm para PASS/FAIL
 
 ---
 
 ## Resumen ejecutivo
 
-| Total mediciones | ✅ PASS | ⚠️ FAIL | ❌ ERROR | 🔎 A revisar (>umbral) |
-|---|---|---|---|---|
-| 2 | 0 | 1 | 1 | 1 |
+| Total mediciones | ✅ PASS | ⚠️ FAIL | ❌ ERROR |
+|---|---|---|---|
+| 2 | 0 | 1 | 1 |
 
 ## Detalle de mediciones
 
-| # | Dirección | Distancia calculada (m) | Distancia medida (m) | Desviación (cm) | Diferencia (m) | Diferencia (%) | Revisar | Estado |
-|---|---|---|---|---|---|---|---|---|
-| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 2.1 | +2.873 | +485.7% | ⚠️ Sí | ⚠️ FAIL |
-| 2 | UWB-Node-11 → UWB-Node-10 | 0.592 | — | — | — | — | — | ❌ ERROR |
+| # | Dirección | Distancia calculada (m) | Distancia medida (m) | Mínimo (cm) | Máximo (cm) | Moda (cm) | Desviación (cm) | Diferencia (m) | Diferencia (%) | Estado |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 342.0 | 351.0 | 345.0 | 2.1 | +2.873 | +485.7% | ⚠️ FAIL |
+| 2 | UWB-Node-11 → UWB-Node-10 | 0.592 | — | — | — | — | — | — | — | ❌ ERROR |
 
 ## Mediciones que requieren revisión
 
-- **UWB-Node-10 → UWB-Node-11** (⚠️ FAIL): 15/15 muestras SUCCESS · diferencia mayor al umbral de revisión
+- **UWB-Node-10 → UWB-Node-11** (⚠️ FAIL): 15/15 muestras SUCCESS
 - **UWB-Node-11 → UWB-Node-10** (❌ ERROR): 0/15 muestras SUCCESS
 ```
 
 La sección **"Mediciones que requieren revisión"** solo aparece si hay al
-menos una fila con `estado != PASS` **o** con `necesita_revision = true`
-— con una campaña 100% exitosa y sin diferencias grandes, el Markdown
-termina en la tabla de detalle.
+menos una fila con `estado != PASS` — con una campaña 100% exitosa el
+Markdown termina en la tabla de detalle.
 
 > El `FAIL` de este ejemplo es correcto y esperado, no un bug: `posicion`
 > de estos dos nodos en `sala_20.toml` sigue siendo un valor `TODO`, no
@@ -92,10 +93,9 @@ termina en la tabla de detalle.
   "fecha": "2026-09-07T15:32:16.xxxxxx-03:00",
   "parametros": {
     "muestras_por_direccion": 15,
-    "tolerancia_cm": 5.0,
-    "umbral_revision_cm": 30.0
+    "tolerancia_cm": 5.0
   },
-  "resumen": { "pass": 0, "fail": 1, "error": 1, "revisar": 1, "total": 2 },
+  "resumen": { "pass": 0, "fail": 1, "error": 1, "total": 2 },
   "resultados": [
     {
       "initiator": "UWB-Node-10",
@@ -104,12 +104,14 @@ termina en la tabla de detalle.
       "distance_measured_m": 3.465,
       "diff_m": 2.8734765431531897,
       "diff_pct": 485.7,
-      "necesita_revision": true,
       "n_samples_success": 15,
       "n_samples_requested": 15,
       "estado": "FAIL",
       "detalle": null,
-      "std_measured_cm": 2.1
+      "std_measured_cm": 2.1,
+      "min_measured_cm": 342.0,
+      "max_measured_cm": 351.0,
+      "mode_measured_cm": 345.0
     },
     {
       "initiator": "UWB-Node-11",
@@ -118,12 +120,14 @@ termina en la tabla de detalle.
       "distance_measured_m": null,
       "diff_m": null,
       "diff_pct": null,
-      "necesita_revision": false,
       "n_samples_success": 0,
       "n_samples_requested": 15,
       "estado": "ERROR",
       "detalle": "",
-      "std_measured_cm": null
+      "std_measured_cm": null,
+      "min_measured_cm": null,
+      "max_measured_cm": null,
+      "mode_measured_cm": null
     }
   ]
 }
@@ -136,9 +140,7 @@ termina en la tabla de detalle.
 | `fecha` | string, ISO 8601 con offset de zona horaria | Momento en que terminó la campaña. |
 | `parametros.muestras_por_direccion` | int \| null | Valor de `--samples` usado. |
 | `parametros.tolerancia_cm` | float | Valor de `--tolerance-cm` usado (umbral de `PASS`/`FAIL`). |
-| `parametros.umbral_revision_cm` | float | Valor de `--review-threshold-cm` usado (umbral de `necesita_revision`). |
 | `resumen.pass` / `.fail` / `.error` | int | Conteo de filas por `estado`. |
-| `resumen.revisar` | int | Cuántas filas tienen `necesita_revision = true` (independiente del `estado`). |
 | `resumen.total` | int | Cantidad total de filas (`N·(N-1)`). |
 | `resultados` | array | Una entrada por dirección medida (ver sección 2), con los campos de la tabla siguiente. |
 
@@ -153,14 +155,16 @@ Campos de cada entrada de `resultados` (`PairResult`, ver
 | `distance_measured_m` | float \| null | Promedio de las muestras `SUCCESS` de `SESSION_INFO_NTF` (metros). `null` si no se pudo medir (`estado="ERROR"`). |
 | `diff_m` | float \| null | `distance_measured_m − distance_calc_m`, **con signo** (positivo = se midió más lejos de lo calculado). `null` si `distance_measured_m` es `null`. |
 | `diff_pct` | float \| null | `diff_m` como porcentaje de `distance_calc_m`, con el mismo signo. `null` si `distance_measured_m` es `null` **o** si `distance_calc_m` es `0` (evita división por cero). |
-| `necesita_revision` | bool | `true` si `\|diff_m\|` supera `parametros.umbral_revision_cm` (ver sección 5). Siempre `false` si `estado="ERROR"` (no hay diferencia que evaluar sin medición). |
 | `n_samples_success` | int | Cuántas muestras `SUCCESS` se juntaron. |
 | `n_samples_requested` | int | Cuántas se pidieron (`--samples`). |
 | `estado` | `"PASS"` \| `"FAIL"` \| `"ERROR"` | Ver sección 5. |
-| `detalle` | string \| null | Mensaje de error si hubo una falla real (conexión, timeout, excepción) — `null` si la única "falla" fue estar fuera de tolerancia o del umbral de revisión. |
+| `detalle` | string \| null | Mensaje de error si hubo una falla real (conexión, timeout, excepción) — `null` si la única "falla" fue estar fuera de tolerancia. |
 | `std_measured_cm` | float \| null | Desviación estándar (poblacional) de las muestras `SUCCESS` de esa dirección, en cm. Mide la dispersión **entre las propias muestras**, algo distinto de `diff_m`/`diff_pct` (que comparan el *promedio* contra lo calculado) — ver sección 6. `null` si `estado="ERROR"`. |
+| `min_measured_cm` | float \| null | Valor mínimo entre las muestras `SUCCESS` de esa dirección, en cm. `null` si `estado="ERROR"`. |
+| `max_measured_cm` | float \| null | Valor máximo entre las muestras `SUCCESS` de esa dirección, en cm. `null` si `estado="ERROR"`. |
+| `mode_measured_cm` | float \| null | Valor más frecuente (moda) entre las muestras `SUCCESS` de esa dirección, en cm — ante empate, el primero encontrado (`statistics.mode`). `null` si `estado="ERROR"`. |
 
-## 5. Cómo se calculan `estado` y `necesita_revision`
+## 5. Cómo se calcula `estado`
 
 En `report/build.py`, con `diff_cm = |diff_m| · 100`:
 
@@ -173,26 +177,14 @@ En `report/build.py`, con `diff_cm = |diff_m| · 100`:
    sugerido, no confirmado contra un criterio de precisión real del
    ambiente).
 3. **`estado = "FAIL"`** — si se midió pero `diff_cm > tolerancia`.
-4. **`necesita_revision = true`** — **independiente** de `estado`: se
-   marca si `diff_cm` supera un umbral más laxo (`--review-threshold-cm`,
-   default `30.0` cm — ver `DEFAULT_REVIEW_THRESHOLD_CM`). La idea es
-   distinguir dos situaciones muy distintas que un `FAIL` por sí solo no
-   diferencia:
-   - Una diferencia chica (unos pocos cm por encima de la tolerancia):
-     típicamente ruido de multipath o una posición ligeramente imprecisa
-     — normal, no necesariamente un error.
-   - Una diferencia grande (>30 cm): casi seguro un error de carga de
-     datos (nodo equivocado, `posicion` mal tipeada, MAC cruzada) — vale
-     la pena revisar antes de confiar en esa medición.
 
-## 6. `FAIL`/`ERROR`/"a revisar" no siempre significan que la medición BLE/UWB falló
+## 6. `FAIL`/`ERROR` no siempre significan que la medición BLE/UWB falló
 
-Un `FAIL` (o una diferencia grande marcada "a revisar") compara la
-distancia **medida** contra la distancia **calculada** a partir de
-`posicion` en el TOML. Si `posicion` todavía es un valor de ejemplo o un
-`TODO` (no la ubicación física real de los nodos — ver
-[formato-ambiente-toml.md](formato-ambiente-toml.md)), el reporte va a
-marcar `FAIL`/"a revisar" aunque la medición UWB en sí haya sido
+Un `FAIL` compara la distancia **medida** contra la distancia
+**calculada** a partir de `posicion` en el TOML. Si `posicion` todavía es
+un valor de ejemplo o un `TODO` (no la ubicación física real de los
+nodos — ver [formato-ambiente-toml.md](formato-ambiente-toml.md)), el
+reporte va a marcar `FAIL` aunque la medición UWB en sí haya sido
 perfecta (muchas muestras `SUCCESS`, poca dispersión entre ellas). Antes
 de interpretar un `FAIL` como "el enlace UWB anda mal", revisar
 `n_samples_success`/`n_samples_requested` de esa fila: si son iguales (o
@@ -225,3 +217,12 @@ Como referencia, `docs/protocolo-ble-qorvo.md` documenta una desviación
 típica de ~2 cm contra hardware real en condiciones normales; una
 desviación de varios cm o más en una fila puntual es señal de revisarla,
 aunque su `diff_m` esté dentro de tolerancia.
+
+Las columnas "Mínimo (cm)"/"Máximo (cm)"/"Moda (cm)" complementan a
+`std_measured_cm` con la misma pregunta ("¿qué tan confiable es la
+medición en sí?"), en formato más directo de leer de un vistazo: el
+rango `[Mínimo, Máximo]` muestra la dispersión real de las muestras
+(no solo su desviación estándar), y la moda muestra el valor individual
+más repetido — útil para distinguir una dispersión simétrica (ruido
+normal de multipath) de una con valores atípicos puntuales que
+distorsionan el promedio.

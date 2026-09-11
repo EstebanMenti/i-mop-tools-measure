@@ -23,9 +23,14 @@ NODE_B = _anchor("b", (3.0, 4.0, 0.0))  # distancia geometrica: 5.0 m = 500 cm
 
 
 def _measured(
-    mean_cm: float | None, *, error: str | None = None, std_cm: float = 0.0
+    mean_cm: float | None,
+    *,
+    error: str | None = None,
+    std_cm: float = 0.0,
+    samples: list[int] | None = None,
 ) -> MeasuredPair:
-    samples = [] if mean_cm is None else [round(mean_cm)]
+    if samples is None:
+        samples = [] if mean_cm is None else [round(mean_cm)]
     return MeasuredPair(
         initiator=NODE_A,
         responder=NODE_B,
@@ -50,7 +55,6 @@ def test_build_results_pass_within_tolerance() -> None:
     assert result.distance_measured_m == pytest.approx(5.0)
     assert result.diff_m == pytest.approx(0.0)
     assert result.diff_pct == pytest.approx(0.0)
-    assert result.necesita_revision is False
     assert result.detalle is None
     assert result.std_measured_cm == pytest.approx(2.1)
 
@@ -62,16 +66,6 @@ def test_build_results_fail_outside_tolerance() -> None:
     assert result.estado == "FAIL"
     assert result.diff_m == pytest.approx(0.20)  # medida (5.20m) - calculada (5.00m)
     assert result.diff_pct == pytest.approx(4.0)
-    assert result.necesita_revision is False  # 20cm < umbral de revision (30cm default)
-
-
-def test_build_results_flags_necesita_revision_above_threshold() -> None:
-    results = build_results([_measured(535.0)], tolerance_cm=5.0, review_threshold_cm=30.0)
-
-    result = results[0]
-    assert result.estado == "FAIL"
-    assert result.diff_m == pytest.approx(0.35)  # 35cm de diferencia > 30cm de umbral
-    assert result.necesita_revision is True
 
 
 def test_build_results_negative_diff_when_measured_is_shorter() -> None:
@@ -110,12 +104,14 @@ def test_build_results_error_when_no_measurement() -> None:
     assert result.distance_measured_m is None
     assert result.diff_m is None
     assert result.diff_pct is None
-    assert result.necesita_revision is False
     assert result.n_samples_success == 0
     assert result.detalle == "sin mediciones SUCCESS recibidas"
     # La distancia calculada se informa igual, aunque la medicion haya fallado.
     assert result.distance_calc_m == pytest.approx(5.0)
     assert result.std_measured_cm is None
+    assert result.min_measured_cm is None
+    assert result.max_measured_cm is None
+    assert result.mode_measured_cm is None
 
 
 def test_build_results_zero_calculated_distance_has_no_diff_pct() -> None:
@@ -138,16 +134,39 @@ def test_build_results_zero_calculated_distance_has_no_diff_pct() -> None:
     assert result.diff_m == pytest.approx(0.10)  # diff_m si se calcula, solo el % se omite
 
 
-def test_summarize_counts_by_estado_and_revision() -> None:
+def test_summarize_counts_by_estado() -> None:
     results = build_results(
         [
             _measured(500.0),  # PASS
-            _measured(520.0),  # FAIL, no llega al umbral de revision
-            _measured(535.0),  # FAIL, supera el umbral de revision (30cm)
+            _measured(520.0),  # FAIL
+            _measured(535.0),  # FAIL
             _measured(None, error="timeout"),  # ERROR
         ]
     )
 
     summary = summarize(results)
 
-    assert summary == {"pass": 1, "fail": 2, "error": 1, "revisar": 1, "total": 4}
+    assert summary == {"pass": 1, "fail": 2, "error": 1, "total": 4}
+
+
+def test_build_results_computes_min_max_mode_from_samples() -> None:
+    """`min_measured_cm`/`max_measured_cm`/`mode_measured_cm` se calculan
+    sobre las muestras individuales (`distance_cm_samples`), no sobre el
+    promedio -- ver docs/formato-reporte.md seccion 4."""
+    results = build_results(
+        [_measured(mean_cm=502.0, samples=[498, 500, 500, 505, 507])], tolerance_cm=5.0
+    )
+
+    result = results[0]
+    assert result.min_measured_cm == pytest.approx(498.0)
+    assert result.max_measured_cm == pytest.approx(507.0)
+    assert result.mode_measured_cm == pytest.approx(500.0)  # se repite dos veces
+
+
+def test_build_results_mode_of_single_sample_equals_that_sample() -> None:
+    results = build_results([_measured(500.0, samples=[500])], tolerance_cm=5.0)
+
+    result = results[0]
+    assert result.min_measured_cm == pytest.approx(500.0)
+    assert result.max_measured_cm == pytest.approx(500.0)
+    assert result.mode_measured_cm == pytest.approx(500.0)

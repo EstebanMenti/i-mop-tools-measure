@@ -45,14 +45,12 @@ class CampaignWorker(QObject):
         environment_path: Path,
         samples: int,
         tolerance_cm: float,
-        review_threshold_cm: float,
         report_dir: Path,
     ) -> None:
         super().__init__()
         self._environment_path = environment_path
         self._samples = samples
         self._tolerance_cm = tolerance_cm
-        self._review_threshold_cm = review_threshold_cm
         self._report_dir = report_dir
 
     @Slot()
@@ -62,11 +60,7 @@ class CampaignWorker(QObject):
             ambiente = load_ambiente(self._environment_path)
 
             def on_pair_done(measured: MeasuredPair) -> None:
-                result = build_results(
-                    [measured],
-                    tolerance_cm=self._tolerance_cm,
-                    review_threshold_cm=self._review_threshold_cm,
-                )[0]
+                result = build_results([measured], tolerance_cm=self._tolerance_cm)[0]
                 results.append(result)
                 self.pair_measured.emit(result)
 
@@ -83,7 +77,6 @@ class CampaignWorker(QObject):
                 sala_nombre=ambiente.nombre,
                 samples=self._samples,
                 tolerance_cm=self._tolerance_cm,
-                review_threshold_cm=self._review_threshold_cm,
                 report_dir=self._report_dir,
             )
         except Exception as exc:  # ver docstring: nunca dejar escapar una excepcion

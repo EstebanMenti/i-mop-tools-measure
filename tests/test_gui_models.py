@@ -12,11 +12,13 @@ PASS_RESULT = PairResult(
     distance_measured_m=5.0,
     diff_m=0.0,
     diff_pct=0.0,
-    necesita_revision=False,
     n_samples_success=10,
     n_samples_requested=10,
     estado="PASS",
     std_measured_cm=2.1,
+    min_measured_cm=497.0,
+    max_measured_cm=503.0,
+    mode_measured_cm=500.0,
 )
 ERROR_RESULT = PairResult(
     initiator="UWB-Node-11",
@@ -25,7 +27,6 @@ ERROR_RESULT = PairResult(
     distance_measured_m=None,
     diff_m=None,
     diff_pct=None,
-    necesita_revision=False,
     n_samples_success=0,
     n_samples_requested=10,
     estado="ERROR",
@@ -37,7 +38,7 @@ def test_model_starts_empty(qtbot: object) -> None:
     model = CampaignResultsModel()
 
     assert model.rowCount() == 0
-    assert model.columnCount() == 9
+    assert model.columnCount() == 11
 
 
 def test_add_result_appends_row(qtbot: object) -> None:
@@ -59,30 +60,30 @@ def test_data_shows_dash_for_missing_measurement(qtbot: object) -> None:
     assert model.data(index) == "-"
 
 
-def test_data_shows_dash_for_missing_std(qtbot: object) -> None:
+def test_data_shows_dash_for_missing_min_max_mode_std(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(ERROR_RESULT)
 
-    index = model.index(0, 4)  # columna "Desviación (cm)"
+    for column in (4, 5, 6, 7):  # Mínimo, Máximo, Moda, Desviación
+        assert model.data(model.index(0, column)) == "-"
 
-    assert model.data(index) == "-"
 
-
-def test_data_formats_std_measured(qtbot: object) -> None:
+def test_data_formats_min_max_mode_std(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(PASS_RESULT)
 
-    index = model.index(0, 4)  # columna "Desviación (cm)"
-
-    assert model.data(index) == "2.1"
+    assert model.data(model.index(0, 4)) == "497.0"  # Mínimo (cm)
+    assert model.data(model.index(0, 5)) == "503.0"  # Máximo (cm)
+    assert model.data(model.index(0, 6)) == "500.0"  # Moda (cm)
+    assert model.data(model.index(0, 7)) == "2.1"  # Desviación (cm)
 
 
 def test_data_formats_signed_diff(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(PASS_RESULT)
 
-    diff_m_index = model.index(0, 5)
-    diff_pct_index = model.index(0, 6)
+    diff_m_index = model.index(0, 8)
+    diff_pct_index = model.index(0, 9)
 
     assert model.data(diff_m_index) == "+0.000"
     assert model.data(diff_pct_index) == "+0.0%"
@@ -101,14 +102,14 @@ def test_header_data(qtbot: object) -> None:
     model = CampaignResultsModel()
 
     assert model.headerData(0, Qt.Orientation.Horizontal) == "Iniciador"
-    assert model.headerData(4, Qt.Orientation.Horizontal) == "Desviación (cm)"
-    assert model.headerData(8, Qt.Orientation.Horizontal) == "Estado"
+    assert model.headerData(7, Qt.Orientation.Horizontal) == "Desviación (cm)"
+    assert model.headerData(10, Qt.Orientation.Horizontal) == "Estado"
 
 
 def test_header_tooltip_explains_std_measured_column(qtbot: object) -> None:
     model = CampaignResultsModel()
 
-    tooltip = model.headerData(4, Qt.Orientation.Horizontal, role=Qt.ItemDataRole.ToolTipRole)
+    tooltip = model.headerData(7, Qt.Orientation.Horizontal, role=Qt.ItemDataRole.ToolTipRole)
 
     assert "dispersión" in tooltip
     assert "NO es la diferencia" in tooltip

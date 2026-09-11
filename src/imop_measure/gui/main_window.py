@@ -30,7 +30,7 @@ from imop_measure.config.loader import load_ambiente
 from imop_measure.errors import MeasureError
 from imop_measure.gui.models import CampaignResultsModel
 from imop_measure.gui.worker import CampaignWorker, start_worker
-from imop_measure.report.build import DEFAULT_REVIEW_THRESHOLD_CM, DEFAULT_TOLERANCE_CM
+from imop_measure.report.build import DEFAULT_TOLERANCE_CM
 from imop_measure.report.models import PairResult
 
 _DEFAULT_SAMPLES = 30  # mismo default que app/cli.py (DEFAULT_SAMPLES)
@@ -143,12 +143,6 @@ class MainWindow(QMainWindow):
         self._tolerance_spin.setValue(DEFAULT_TOLERANCE_CM)
         form.addRow("Tolerancia PASS/FAIL:", self._tolerance_spin)
 
-        self._review_threshold_spin = QDoubleSpinBox()
-        self._review_threshold_spin.setRange(0.0, 10_000.0)
-        self._review_threshold_spin.setSuffix(" cm")
-        self._review_threshold_spin.setValue(DEFAULT_REVIEW_THRESHOLD_CM)
-        form.addRow("Umbral de revisión:", self._review_threshold_spin)
-
         self._report_dir_edit = QLineEdit(_DEFAULT_REPORT_DIR)
         report_dir_browse_btn = QPushButton("Examinar…")
         report_dir_browse_btn.clicked.connect(self._on_browse_report_dir_clicked)
@@ -204,7 +198,6 @@ class MainWindow(QMainWindow):
             environment_path=environment_path,
             samples=self._samples_spin.value(),
             tolerance_cm=self._tolerance_spin.value(),
-            review_threshold_cm=self._review_threshold_spin.value(),
             report_dir=Path(self._report_dir_edit.text()),
         )
         thread = start_worker(worker)
@@ -258,10 +251,7 @@ class MainWindow(QMainWindow):
         pass_n = sum(1 for r in results if r.estado == "PASS")
         fail_n = sum(1 for r in results if r.estado == "FAIL")
         error_n = sum(1 for r in results if r.estado == "ERROR")
-        revisar_n = sum(1 for r in results if r.necesita_revision)
-        self._status_label.setText(
-            f"{pass_n} PASS · {fail_n} FAIL · {error_n} ERROR · {revisar_n} a revisar"
-        )
+        self._status_label.setText(f"{pass_n} PASS · {fail_n} FAIL · {error_n} ERROR")
         self._report_label.setText(f"Reportes: {json_path} · {md_path}")
 
     def _on_failed(self, message: str) -> None:
