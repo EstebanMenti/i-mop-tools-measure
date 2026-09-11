@@ -60,6 +60,16 @@ qorvo <texto>                     # pasa <texto> tal cual a la CLI del Qorvo por
 - El comando viejo **`uwb on`/`uwb off` ya no existe** (fue unificado en
   `qorvo` a partir de la versión ≥1.17 del firmware del puente). No usarlo
   en código nuevo.
+- **[2026-09-11] Apagado automático de seguridad**: `BleTransport` (código
+  de producción, no los tests) siempre enciende el módulo con
+  `qorvo on -t 1500s` (25 min, ver
+  `transport.ble_link.SAFETY_AUTO_OFF_HOLD_S`) en vez de `qorvo on` sin
+  límite — tanto en `open()` como en cada `power_cycle()` posterior (una
+  por cada dirección medida). Pedido explícito del usuario: si la medición
+  se interrumpe (crash, un nodo que deja de poder reconectarse por BLE) y
+  nadie llega a mandar `qorvo off`, el módulo se apaga solo en vez de
+  drenar la batería indefinidamente. En uso normal el temporizador se
+  re-arma en cada `power_cycle()` y nunca llega a dispararse.
 - Cualquier otro texto después de `qorvo ` se reenvía **verbatim** por UART
   al Qorvo (115200 baudios, terminador `\r\n`), p. ej. `qorvo STAT`,
   `qorvo INITF -CHAN=9 ...`.

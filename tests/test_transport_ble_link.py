@@ -25,6 +25,7 @@ def make_transport(
     *,
     connect_retry_attempts: int = 1,
     connect_retry_backoff_s: float = 0.0,
+    power_on_hold_s: float | None = None,
 ) -> tuple[BleTransport, FakeBleakClient]:
     client = fake_client or FakeBleakClient(ADDRESS)
 
@@ -48,6 +49,7 @@ def make_transport(
         power_cycle_off_settle_s=0.0,
         connect_retry_attempts=connect_retry_attempts,
         connect_retry_backoff_s=connect_retry_backoff_s,
+        power_on_hold_s=power_on_hold_s,
         _client_factory=factory,
     )
     return transport, client
@@ -71,6 +73,38 @@ class TestLifecycle:
             transport.power_cycle()
 
         assert client.sent == [b"qorvo off\n", b"qorvo on\n"]
+
+    def test_open_applies_power_on_hold_s_as_safety_auto_off(self) -> None:
+        """Si se construye con `power_on_hold_s`, `open()` enciende el
+        modulo con `-t` -- apagado automatico de seguridad (ver
+        `SAFETY_AUTO_OFF_HOLD_S`), no un `qorvo on` sin limite."""
+        transport, client = make_transport(power_on_hold_s=1500.0)
+
+        with transport:
+            pass
+
+        assert b"qorvo on -t 1500s\n" in client.sent
+
+    def test_power_cycle_reapplies_power_on_hold_s(self) -> None:
+        """El power-cycle de cada direccion tambien debe re-armar el
+        apagado automatico de seguridad, no solo el `open()` inicial."""
+        transport, client = make_transport(power_on_hold_s=1500.0)
+
+        with transport:
+            client.sent.clear()
+            transport.power_cycle()
+
+        assert client.sent == [b"qorvo off\n", b"qorvo on -t 1500s\n"]
+
+    def test_open_without_power_on_hold_s_keeps_plain_on(self) -> None:
+        """`power_on_hold_s=None` (default) preserva el comportamiento
+        anterior, sin limite de tiempo."""
+        transport, client = make_transport()
+
+        with transport:
+            pass
+
+        assert b"qorvo on\n" in client.sent
 
     def test_connect_failure_raises_transport_error(self) -> None:
         fake = FakeBleakClient(ADDRESS, fail_connect=True)

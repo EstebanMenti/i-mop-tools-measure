@@ -96,6 +96,18 @@ _POWER_ON_SETTLE_S = 3.0
 # power_cycle()).
 _POWER_CYCLE_OFF_SETTLE_S = 2.0
 
+# Ventana de apagado automatico por seguridad (`qorvo on -t <valor>`, ver
+# docs/protocolo-ble-qorvo.md seccion sobre `qorvo on`/`off`): si la
+# medicion se interrumpe (crash, corte de BLE que no logra reconectar,
+# proceso matado a la fuerza) y nadie manda un `qorvo off` explicito, el
+# modulo igual se apaga solo pasado este tiempo en vez de quedar
+# consumiendo bateria de forma indefinida. Se re-arma en cada `power_on`/
+# `power_cycle` nuevo (p. ej. antes de cada direccion medida), asi que en
+# uso normal nunca llega a dispararse. Pedido explicito del usuario
+# (ahorro de bateria como medida de seguridad, no un requisito del
+# protocolo).
+SAFETY_AUTO_OFF_HOLD_S = 1500.0
+
 # El backend WinRT de bleak (bluetooth en Windows) tiene fallas de conexion
 # transitorias y conocidas, sin arreglo de fondo en bleak todavia (ver
 # docs/protocolo-ble-qorvo.md, seccion "Fallas conocidas del backend BLE
@@ -159,6 +171,11 @@ class BleTransport:
             transitoria conocida del backend BLE de Windows (ver arriba)
             antes de darse por vencido.
         connect_retry_backoff_s: espera entre intentos de conexion.
+        power_on_hold_s: si no es `None`, cada `power_on()` disparado desde
+            `open()`/`power_cycle()` lleva `-t <power_on_hold_s>s` (ver
+            `SAFETY_AUTO_OFF_HOLD_S`) para que el modulo se apague solo
+            si nadie lo apaga explicitamente. `None` (default) preserva el
+            comportamiento sin limite de tiempo.
     """
 
     NUS_SERVICE_UUID = NUS_SERVICE_UUID
@@ -178,6 +195,7 @@ class BleTransport:
         power_cycle_off_settle_s: float = _POWER_CYCLE_OFF_SETTLE_S,
         connect_retry_attempts: int = _CONNECT_RETRY_ATTEMPTS,
         connect_retry_backoff_s: float = _CONNECT_RETRY_BACKOFF_S,
+        power_on_hold_s: float | None = None,
         _client_factory: Callable[..., _BleakClientLike] | None = None,
     ) -> None:
         self._address = address
@@ -192,6 +210,7 @@ class BleTransport:
         self._power_cycle_off_settle_s = power_cycle_off_settle_s
         self._connect_retry_attempts = connect_retry_attempts
         self._connect_retry_backoff_s = connect_retry_backoff_s
+        self._power_on_hold_s = power_on_hold_s
         self._client_factory: Callable[..., _BleakClientLike] = _client_factory or cast(
             "Callable[..., _BleakClientLike]", BleakClient
         )
@@ -235,7 +254,7 @@ class BleTransport:
         )
         self._thread.start()
         self._run_coro(self._connect(), timeout_s=self._connect_timeout_s)
-        self.power_on()
+        self.power_on(hold_s=self._power_on_hold_s)
         time.sleep(self._power_on_settle_s)
         # El Qorvo debe estar encendido antes de aceptar el comando (misma
         # precondicion que cualquier otro `qorvo <cmd>`, ver power_on()).
@@ -389,7 +408,7 @@ class BleTransport:
         """
         self.power_off()
         time.sleep(self._power_cycle_off_settle_s)
-        self.power_on()
+        self.power_on(hold_s=self._power_on_hold_s)
         time.sleep(self._power_on_settle_s)
 
     def enable_stream(self) -> None:

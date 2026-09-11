@@ -21,6 +21,7 @@ import pytest
 
 from imop_measure.config.loader import load_ambiente
 from imop_measure.config.models import Anchor
+from imop_measure.ranging import pair_runner
 from imop_measure.ranging.pair_runner import (
     close_initiator,
     open_initiator,
@@ -621,6 +622,64 @@ def test_run_one_to_many_one_responder_connect_failure_does_not_abort_the_rest(
     assert by_responder["uwb_node_b"].distance_cm_samples == [100]
     assert by_responder["uwb_node_c"].error is not None
     assert by_responder["uwb_node_c"].n_success == 0
+
+
+def test_run_one_to_many_retries_failed_responder_after_first_full_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Si ANCHOR_C agota los `_OPEN_RETRY_ATTEMPTS` de la primera pasada
+    pero para cuando se termino de configurar el resto de los
+    respondedores ya se puede conectar, la segunda pasada (al final de la
+    primera vuelta completa, ver docstring de `run_one_to_many`) lo
+    recupera -- no queda descartado solo por haber fallado en su primer
+    turno."""
+    monkeypatch.setattr("imop_measure.ranging.pair_runner._OPEN_RETRY_BACKOFF_S", 0.0)
+    script_a, script_b = _base_scripts()
+    script_c = {"STOP": [b"ok\r\n"], "STAT": [STAT_NONE]}
+    script_b[RESPF_MULTI_B] = [b"ok\r\n"]
+    script_c[RESPF_MULTI_C] = [b"ok\r\n"]
+    script_a[INITF_MULTI_A] = [
+        b"ok\r\n",
+        *_ntf_fragments_multi(0, [(11, 100, "SUCCESS"), (12, 150, "SUCCESS")]),
+    ]
+
+    fake_a = FakeBleakClient(ANCHOR_A.mac, script=script_a)
+    fake_b = FakeBleakClient(ANCHOR_B.mac, script=script_b)
+    # Falla las 10 conexiones de la primera pasada (agota
+    # _OPEN_RETRY_ATTEMPTS) y recien conecta en la primera de la segunda.
+    fake_c = FakeBleakClient(ANCHOR_C.mac, script=script_c, fail_connect_times=10)
+    factory = _make_factory_multi(
+        {ANCHOR_A.mac: fake_a, ANCHOR_B.mac: fake_b, ANCHOR_C.mac: fake_c}
+    )
+
+    results = run_one_to_many(
+        initiator=ANCHOR_A,
+        responders=[ANCHOR_B, ANCHOR_C],
+        session=SessionParams(),
+        n_samples=1,
+        ble_timeouts={},
+        _transport_factory=factory,
+    )
+
+    by_responder = {r.responder.key: r for r in results}
+    assert by_responder["uwb_node_b"].error is None
+    assert by_responder["uwb_node_b"].distance_cm_samples == [100]
+    # C se recupero en la segunda pasada, no quedo descartado.
+    assert by_responder["uwb_node_c"].error is None
+    assert by_responder["uwb_node_c"].distance_cm_samples == [150]
+
+
+def test_default_transport_factory_applies_safety_auto_off() -> None:
+    """El `_transport_factory` usado contra hardware real (cuando ninguna
+    de las funciones de este modulo recibe una inyectada, ver
+    `open_initiator`/`run_directed_measurement`/`run_one_to_many`) arma
+    cada `BleTransport` con el apagado automatico de seguridad -- ver
+    `transport.ble_link.SAFETY_AUTO_OFF_HOLD_S`."""
+    factory = pair_runner._default_transport_factory({})
+
+    transport = factory(ANCHOR_A.mac)
+
+    assert transport._power_on_hold_s == pair_runner.SAFETY_AUTO_OFF_HOLD_S
 
 
 @pytest.mark.hardware
