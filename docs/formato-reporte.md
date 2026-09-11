@@ -69,9 +69,9 @@ convertir unidades mentalmente:
 
 ## Detalle de mediciones
 
-| # | Dirección | Calculada (m) | Promedio (m) | Mínimo (m) | Máximo (m) | Moda (m) | Desviación (m) | Diferencia (m) | Diferencia (%) | Estado |
+| # | Dirección | Calculada (m) | Promedio (m) | Moda (m) | Mínimo (m) | Máximo (m) | Desviación (m) | Diferencia (m) | Diferencia (%) | Estado |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 3.420 | 3.510 | 3.450 | 0.021 | +2.873 | +485.7% | ⚠️ FAIL |
+| 1 | UWB-Node-10 → UWB-Node-11 | 0.592 | 3.465 | 3.450 | 3.420 | 3.510 | 0.021 | +2.873 | +485.7% | ⚠️ FAIL |
 | 2 | UWB-Node-11 → UWB-Node-10 | 0.592 | — | — | — | — | — | — | — | ❌ ERROR |
 
 ## Mediciones que requieren revisión

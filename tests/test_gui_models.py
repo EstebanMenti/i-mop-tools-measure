@@ -64,7 +64,7 @@ def test_data_shows_dash_for_missing_min_max_mode_std(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(ERROR_RESULT)
 
-    for column in (4, 5, 6, 7):  # Mínimo, Máximo, Moda, Desviación
+    for column in (4, 5, 6, 7):  # Moda, Mínimo, Máximo, Desviación
         assert model.data(model.index(0, column)) == "-"
 
 
@@ -72,9 +72,9 @@ def test_data_formats_min_max_mode_std(qtbot: object) -> None:
     model = CampaignResultsModel()
     model.add_result(PASS_RESULT)
 
-    assert model.data(model.index(0, 4)) == "4.970"  # Mínimo (m)
-    assert model.data(model.index(0, 5)) == "5.030"  # Máximo (m)
-    assert model.data(model.index(0, 6)) == "5.000"  # Moda (m)
+    assert model.data(model.index(0, 4)) == "5.000"  # Moda (m), al lado de Promedio
+    assert model.data(model.index(0, 5)) == "4.970"  # Mínimo (m)
+    assert model.data(model.index(0, 6)) == "5.030"  # Máximo (m)
     assert model.data(model.index(0, 7)) == "0.021"  # Desviación (m)
 
 

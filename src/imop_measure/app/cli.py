@@ -123,9 +123,9 @@ def _print_summary(results: list[PairResult]) -> None:
     table.add_column("Dirección")
     table.add_column("Calculada (m)", justify="right")
     table.add_column("Promedio (m)", justify="right")
+    table.add_column("Moda (m)", justify="right")
     table.add_column("Mínimo (m)", justify="right")
     table.add_column("Máximo (m)", justify="right")
-    table.add_column("Moda (m)", justify="right")
     table.add_column("Desviación (m)", justify="right")
     table.add_column("Diferencia (m)", justify="right")
     table.add_column("Diferencia (%)", justify="right")
@@ -145,9 +145,9 @@ def _print_summary(results: list[PairResult]) -> None:
             f"{result.initiator} -> {result.responder}",
             f"{result.distance_calc_m:.3f}",
             medida,
+            moda,
             minimo,
             maximo,
-            moda,
             desviacion,
             diff_m,
             diff_pct,
